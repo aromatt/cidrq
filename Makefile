@@ -20,6 +20,3 @@ $(DIST_TARGETS): $(CMD_SOURCES) $(LIB_SOURCES)
 
 clean:
 	rm -f bin/* dist/*
-
-run: build
-	./$(BINARY_NAME)
