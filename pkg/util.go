@@ -1,7 +1,6 @@
-package util
+package pkg
 
 import (
-	"bufio"
 	"cmp"
 	"fmt"
 	"io"
@@ -66,25 +65,26 @@ func PrefixMinusIPSet(prefix netip.Prefix, ipset *netipx.IPSet) ([]netip.Prefix,
 // TODO instead of passing error handler so much, make a CidrReader struct
 func ReadCidrs(
 	r io.Reader,
-	fn func(netip.Prefix) error,
+	parseFn func(string) (netip.Prefix, error),
+	cidrFn func(netip.Prefix) error,
 	errFn func(error) error,
 ) error {
 	for {
-		var cidrStr string
-		if _, err := fmt.Fscanln(r, &cidrStr); err != nil {
+		var line string
+		if _, err := fmt.Fscanln(r, &line); err != nil {
 			if err == io.EOF {
 				break
 			} else {
 				return err
 			}
 		}
-		prefix, err := netip.ParsePrefix(EnsurePrefix(cidrStr))
+		prefix, err := parseFn(line)
 		if err != nil {
 			if err = errFn(err); err != nil {
 				return err
 			}
 		} else {
-			if err = fn(prefix); err != nil {
+			if err = cidrFn(prefix); err != nil {
 				if err = errFn(err); err != nil {
 					return err
 				}
@@ -94,24 +94,8 @@ func ReadCidrs(
 	return nil
 }
 
-func ReadCidrsFromStdin(
-	fn func(netip.Prefix) error,
-	errFn func(error) error,
-) error {
-	return ReadCidrs(bufio.NewReader(os.Stdin), fn, errFn)
-}
-
-func ReadCidrsFromFile(
-	path string,
-	fn func(netip.Prefix) error,
-	errFn func(error) error,
-) error {
-	file, err := os.Open(path)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-	return ReadCidrs(file, fn, errFn)
+func ParsePrefixOrAddr(s string) (netip.Prefix, error) {
+	return netip.ParsePrefix(EnsurePrefix(s))
 }
 
 func LoadIPSetBuilderFromFile(
@@ -119,14 +103,23 @@ func LoadIPSetBuilderFromFile(
 	errFn func(error) error,
 ) (*netipx.IPSetBuilder, error) {
 	ipsb := netipx.IPSetBuilder{}
-	err := ReadCidrsFromFile(
-		path,
-		func(prefix netip.Prefix) error {
+
+	p := CidrProcessor{
+		ParseFn: ParsePrefixOrAddr,
+		HandlerFn: func(prefix netip.Prefix, _ string) error {
 			ipsb.AddPrefix(prefix)
 			return nil
 		},
-		errFn,
-	)
+		ErrFn: errFn,
+	}
+
+	r, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer r.Close()
+
+	err = p.Process(r)
 	if err != nil {
 		return nil, err
 	}

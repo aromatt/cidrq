@@ -5,10 +5,12 @@ import (
 	"fmt"
 	cli "github.com/urfave/cli/v2"
 	"go4.org/netipx"
+	"io"
 	"net/netip"
 	"os"
+	"strings"
 
-	"github.com/aromatt/cidrq/util"
+	cq "github.com/aromatt/cidrq/pkg"
 )
 
 const (
@@ -47,26 +49,32 @@ func validatePath(c *cli.Context, v string) error {
 }
 
 // Iterate over CIDRs from stdin and files (args), calling fn for each
-func iterInputCidrs(c *cli.Context, fn func(netip.Prefix) error) error {
+func iterPathArgs(c *cli.Context, fn func(io.Reader) error) error {
 	var err error
 
 	// Assume stdin if no args
 	if c.NArg() == 0 {
-		if err = util.ReadCidrsFromStdin(fn, errorHandler); err != nil {
+		if err = fn(io.Reader(os.Stdin)); err != nil {
 			return err
 		}
 	}
 
-	// Iterate over files
+	// Iterate over files ('-' means stdin, which only works once)
 	for _, path := range c.Args().Slice() {
 		didReadStdin := false
 		if path == "-" && !didReadStdin {
 			didReadStdin = true
-			if err = util.ReadCidrsFromStdin(fn, errorHandler); err != nil {
+			if err = fn(io.Reader(os.Stdin)); err != nil {
 				return err
 			}
-		} else if err = util.ReadCidrsFromFile(path, fn, errorHandler); err != nil {
-			return err
+		} else {
+			r, err := os.Open(path)
+			if err != nil {
+				return err
+			}
+			if err = fn(r); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -76,13 +84,26 @@ func iterInputCidrs(c *cli.Context, fn func(netip.Prefix) error) error {
 // TODO reimplement with IPMap
 func handleMerge(c *cli.Context) error {
 	merged := netipx.IPSetBuilder{}
-	err := iterInputCidrs(c, func(prefix netip.Prefix) error {
-		merged.AddPrefix(prefix)
-		return nil
+
+	// Set up processor
+	p := cq.CidrProcessor{
+		ParseFn: cq.ParsePrefixOrAddr,
+		HandlerFn: func(prefix netip.Prefix, line string) error {
+			merged.AddPrefix(prefix)
+			return nil
+		},
+		ErrFn: errorHandler,
+	}
+
+	// Process all inputs
+	err := iterPathArgs(c, func(r io.Reader) error {
+		return p.Process(r)
 	})
 	if err != nil {
 		return err
 	}
+
+	// Output merged CIDRs
 	mergedIPs, err := merged.IPSet()
 	if err != nil {
 		return fmt.Errorf("Error merging IPs: %v", err)
@@ -93,6 +114,17 @@ func handleMerge(c *cli.Context) error {
 	return nil
 }
 
+func parseLine(field int, delimiter string) func(string) (netip.Prefix, error) {
+	return func(line string) (netip.Prefix, error) {
+		// Split line into fields
+		fields := strings.Split(line, delimiter)
+		if field > len(fields) {
+			return netip.Prefix{}, fmt.Errorf("Field %d not found in line: %s", field, line)
+		}
+		return cq.ParsePrefixOrAddr(fields[field-1])
+	}
+}
+
 // TODO reimplement with IPMap
 func handleFilter(c *cli.Context) error {
 	var err error
@@ -100,7 +132,7 @@ func handleFilter(c *cli.Context) error {
 
 	// -exclude
 	if excludePath := c.String("exclude"); excludePath != "" {
-		excludeIpset, err = util.LoadIPSetFromFile(excludePath, errorHandler)
+		excludeIpset, err = cq.LoadIPSetFromFile(excludePath, errorHandler)
 		if err != nil {
 			return err
 		}
@@ -108,7 +140,7 @@ func handleFilter(c *cli.Context) error {
 
 	// -match
 	if matchPath := c.String("match"); matchPath != "" {
-		matchIpsb, err := util.LoadIPSetBuilderFromFile(matchPath, errorHandler)
+		matchIpsb, err := cq.LoadIPSetBuilderFromFile(matchPath, errorHandler)
 		if err != nil {
 			return err
 		}
@@ -121,42 +153,61 @@ func handleFilter(c *cli.Context) error {
 		}
 	}
 
-	return iterInputCidrs(c, func(prefix netip.Prefix) error {
-		// Skip prefix if it doesn't overlap with the match list
-		if matchIpset != nil && !matchIpset.OverlapsPrefix(prefix) {
-			return nil
-		}
+	// -field
+	field := c.Int("field")
 
-		// Apply exclusions
-		if excludeIpset != nil {
-			if excludeIpset.OverlapsPrefix(prefix) {
-				// Just skip if the entire prefix is excluded
-				if excludeIpset.ContainsPrefix(prefix) {
-					return nil
-				}
-				// Subtract the excluded portion and print the remainder
-				remaining, err := util.PrefixMinusIPSet(prefix, excludeIpset)
-				if err != nil {
-					return err
-				}
-				for _, p := range remaining {
-					fmt.Println(p)
-				}
+	// -delimiter
+	delimiter := c.String("delimiter")
+	if delimiter == "\\t" {
+		delimiter = "\t"
+	}
+
+	// set up processor
+	p := cq.CidrProcessor{
+		ParseFn: parseLine(field, delimiter),
+		ErrFn:   errorHandler,
+		HandlerFn: func(prefix netip.Prefix, line string) error {
+			// Skip prefix if it doesn't overlap with the match list
+			if matchIpset != nil && !matchIpset.OverlapsPrefix(prefix) {
 				return nil
 			}
-		}
 
-		// Prefix made it through the filter unaffected
-		fmt.Println(prefix)
-		return nil
+			// Apply exclusions
+			if excludeIpset != nil {
+				if excludeIpset.OverlapsPrefix(prefix) {
+					// Just skip if the entire prefix is excluded
+					if excludeIpset.ContainsPrefix(prefix) {
+						return nil
+					}
+					// Subtract the excluded portion and print the remainder
+					remaining, err := cq.PrefixMinusIPSet(prefix, excludeIpset)
+					if err != nil {
+						return err
+					}
+					for range remaining {
+						fmt.Println(line)
+					}
+					return nil
+				}
+			}
+
+			// Prefix made it through the filter unaffected
+			fmt.Println(line)
+			return nil
+		},
+	}
+
+	return iterPathArgs(c, func(r io.Reader) error {
+		return p.Process(r)
 	})
 }
 
 func main() {
 	// set args for examples sake
 	app := &cli.App{
-		Name:  "cidrq",
-		Usage: "CIDR manipulation tool",
+		Name:                   "cidrq",
+		Usage:                  "CIDR manipulation tool",
+		UseShortOptionHandling: true,
 		Flags: []cli.Flag{
 			&cli.StringFlag{
 				Name:  "err",
@@ -196,6 +247,18 @@ func main() {
 							"any CIDRs which overlap with the match list. If " +
 							"-exclude is provided, it will be applied after matching.",
 						Action: validatePath,
+					},
+					&cli.IntFlag{
+						Name:    "field",
+						Aliases: []string{"f"},
+						Usage: "Instruct cidrq to extract CIDR from a field, " +
+							" where field delimiter is provided via -d. Field " +
+							"extraction does not apply to exclusion or match lists.",
+					},
+					&cli.StringFlag{
+						Name:    "delimiter",
+						Aliases: []string{"d"},
+						Usage:   "Delimiter for field separation (use '\\t' for tab).",
 					},
 				},
 				Action: handleFilter,
