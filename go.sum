@@ -4,6 +4,14 @@ github.com/aromatt/netipmap v0.0.0-20240519040957-e4bb48756e7d h1:pRjlkOX0NlgBeI
 github.com/aromatt/netipmap v0.0.0-20240519040957-e4bb48756e7d/go.mod h1:123PivQXvehj+AdaKwuTcmj+ZwbJgsyC9VBWQZNif4w=
 github.com/aromatt/netipmap v0.0.0-20240519042824-c667674d6b83 h1:gZKJvb0bN4uYzBFkFFVcyK8/iAk6mK2deg674NMzwsM=
 github.com/aromatt/netipmap v0.0.0-20240519042824-c667674d6b83/go.mod h1:123PivQXvehj+AdaKwuTcmj+ZwbJgsyC9VBWQZNif4w=
+github.com/aromatt/netipmap v0.0.0-20240519163421-a0b585932ac1 h1:GUSJAq5EF+CrJ7OCUHse6+tDeSPAhlWlL7/Lm5xisw0=
+github.com/aromatt/netipmap v0.0.0-20240519163421-a0b585932ac1/go.mod h1:123PivQXvehj+AdaKwuTcmj+ZwbJgsyC9VBWQZNif4w=
+github.com/aromatt/netipmap v0.0.0-20240519163700-efcb17271570 h1:eN2F33/rMyKoXBATxHmGiR+9Gxh8dy3qbIC7zC2s+Sk=
+github.com/aromatt/netipmap v0.0.0-20240519163700-efcb17271570/go.mod h1:123PivQXvehj+AdaKwuTcmj+ZwbJgsyC9VBWQZNif4w=
+github.com/aromatt/netipmap v0.0.0-20240519165134-ce1baa34ee66 h1:0zDjhUqukeU6mS8XIbNzZi9ChVojNNIxb5CBcWFbIME=
+github.com/aromatt/netipmap v0.0.0-20240519165134-ce1baa34ee66/go.mod h1:123PivQXvehj+AdaKwuTcmj+ZwbJgsyC9VBWQZNif4w=
+github.com/aromatt/netipmap v0.0.0-20240521161853-6e3a29344a60 h1:YWA3VqUs+3JnyoFGRF/hPUJIDfhPdBZ2kEZoyDTBgq8=
+github.com/aromatt/netipmap v0.0.0-20240521161853-6e3a29344a60/go.mod h1:123PivQXvehj+AdaKwuTcmj+ZwbJgsyC9VBWQZNif4w=
 github.com/chzyer/logex v1.1.10/go.mod h1:+Ywpsq7O8HXn0nuIou7OrIPyXbp3wmkHB+jjWRnGsAI=
 github.com/chzyer/readline v0.0.0-20180603132655-2972be24d48e/go.mod h1:nSuG5e5PlCu98SY8svDHJxuZscDgtXS6KTTbou5AhLI=
 github.com/chzyer/test v0.0.0-20180213035817-a1ea475d72b1/go.mod h1:Q3SI9o4m/ZMnBNeIyt5eFwwo7qiLfzFZmjNmxjkiQlU=

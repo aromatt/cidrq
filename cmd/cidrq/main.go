@@ -11,6 +11,8 @@ import (
 	"strings"
 
 	cq "github.com/aromatt/cidrq/pkg"
+	//profile "github.com/pkg/profile"
+	"github.com/aromatt/netipmap"
 )
 
 const (
@@ -81,19 +83,20 @@ func iterPathArgs(c *cli.Context, fn func(io.Reader) error) error {
 	return nil
 }
 
-// TODO reimplement with IPMap
 func handleMerge(c *cli.Context) error {
-	merged := netipx.IPSetBuilder{}
+	merged := netipmap.PrefixSetBuilder{}
 
 	// Set up processor
 	p := cq.CidrProcessor{
 		ParseFn: cq.ParsePrefixOrAddr,
 		HandlerFn: func(prefix netip.Prefix, line string) error {
-			merged.AddPrefix(prefix)
+			merged.Add(prefix)
 			return nil
 		},
 		ErrFn: errorHandler,
 	}
+
+	//fmt.Println(merged.String())
 
 	// Process all inputs
 	err := iterPathArgs(c, func(r io.Reader) error {
@@ -104,10 +107,7 @@ func handleMerge(c *cli.Context) error {
 	}
 
 	// Output merged CIDRs
-	mergedIPs, err := merged.IPSet()
-	if err != nil {
-		return fmt.Errorf("Error merging IPs: %v", err)
-	}
+	mergedIPs := merged.PrefixSet()
 	for _, p := range mergedIPs.Prefixes() {
 		fmt.Println(p)
 	}
@@ -125,32 +125,42 @@ func parseLine(field int, delimiter string) func(string) (netip.Prefix, error) {
 	}
 }
 
-// TODO reimplement with IPMap
 func handleFilter(c *cli.Context) error {
 	var err error
-	var excludeIpset, matchIpset *netipx.IPSet
+	var excludePrefixSet, matchPrefixSet *netipmap.PrefixSet
+	// TODO remove this once we can do everything with PrefixSets
+	var excludeIpset *netipx.IPSet
 
 	// -exclude
 	if excludePath := c.String("exclude"); excludePath != "" {
-		excludeIpset, err = cq.LoadIPSetFromFile(excludePath, errorHandler)
+		excludePrefixSet, err = cq.LoadPrefixSetFromFile(excludePath, errorHandler)
 		if err != nil {
 			return err
 		}
+		excludeIpsb := netipx.IPSetBuilder{}
+		for _, prefix := range excludePrefixSet.Prefixes() {
+			excludeIpsb.AddPrefix(prefix)
+		}
+		excludeIpset, err = excludeIpsb.IPSet()
+		if err != nil {
+			return err
+		}
+
 	}
 
 	// -match
 	if matchPath := c.String("match"); matchPath != "" {
-		matchIpsb, err := cq.LoadIPSetBuilderFromFile(matchPath, errorHandler)
+		matchPsb, err := cq.LoadPrefixSetBuilderFromFile(matchPath, errorHandler)
 		if err != nil {
 			return err
 		}
-		if excludeIpset != nil {
-			matchIpsb.RemoveSet(excludeIpset)
+		if excludePrefixSet != nil {
+			for _, excludePrefix := range excludePrefixSet.Prefixes() {
+				// TODO this needs to be RemoveDescendants
+				matchPsb.Remove(excludePrefix)
+			}
 		}
-		matchIpset, err = matchIpsb.IPSet()
-		if err != nil {
-			return err
-		}
+		matchPrefixSet = matchPsb.PrefixSet()
 	}
 
 	// Set up parser
@@ -172,24 +182,30 @@ func handleFilter(c *cli.Context) error {
 		ErrFn:   errorHandler,
 		HandlerFn: func(prefix netip.Prefix, line string) error {
 			// Skip prefix if it doesn't overlap with the match list
-			if matchIpset != nil && !matchIpset.OverlapsPrefix(prefix) {
+			if matchPrefixSet != nil && !matchPrefixSet.OverlapsPrefix(prefix) {
 				return nil
 			}
 
 			// Apply exclusions
-			if excludeIpset != nil {
-				if excludeIpset.OverlapsPrefix(prefix) {
-					// Just skip if the entire prefix is excluded
-					if excludeIpset.ContainsPrefix(prefix) {
-						return nil
-					}
-					// Subtract the excluded portion and print the remainder
-					remaining, err := cq.PrefixMinusIPSet(prefix, excludeIpset)
-					if err != nil {
-						return err
-					}
-					for range remaining {
+			if excludePrefixSet != nil {
+				if excludePrefixSet.Encompasses(prefix) {
+					return nil
+				}
+				if excludePrefixSet.OverlapsPrefix(prefix) {
+					// If we're printing full lines, only print the line once.
+					// If we're just printing plain CIDRs, then subtract the
+					// excluded portion and print the remainder.
+					if field != 0 {
 						fmt.Println(line)
+					} else {
+						// TODO reimplement with PrefixMap
+						remaining, err := cq.PrefixMinusIPSet(prefix, excludeIpset)
+						if err != nil {
+							return err
+						}
+						for _, p := range remaining {
+							fmt.Println(p)
+						}
 					}
 					return nil
 				}

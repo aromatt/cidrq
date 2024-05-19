@@ -7,6 +7,7 @@ import (
 	"net/netip"
 	"os"
 
+	"github.com/aromatt/netipmap"
 	"go4.org/netipx"
 )
 
@@ -139,4 +140,43 @@ func LoadIPSetFromFile(
 		return nil, err
 	}
 	return ipsb.IPSet()
+}
+
+func LoadPrefixSetBuilderFromFile(
+	path string,
+	errFn func(error) error,
+) (*netipmap.PrefixSetBuilder, error) {
+	psb := netipmap.PrefixSetBuilder{}
+
+	p := CidrProcessor{
+		ParseFn: ParsePrefixOrAddr,
+		HandlerFn: func(prefix netip.Prefix, _ string) error {
+			psb.Add(prefix)
+			return nil
+		},
+		ErrFn: errFn,
+	}
+
+	r, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer r.Close()
+
+	err = p.Process(r)
+	if err != nil {
+		return nil, err
+	}
+	return &psb, nil
+}
+
+func LoadPrefixSetFromFile(
+	path string,
+	errFn func(error) error,
+) (*netipmap.PrefixSet, error) {
+	psb, err := LoadPrefixSetBuilderFromFile(path, errFn)
+	if err != nil {
+		return nil, err
+	}
+	return psb.PrefixSet(), nil
 }

@@ -9,6 +9,7 @@ require (
 )
 
 require (
+	github.com/aromatt/netipmap v0.0.0-20240521161853-6e3a29344a60 // indirect
 	github.com/cpuguy83/go-md2man/v2 v2.0.4 // indirect
 	github.com/felixge/fgprof v0.9.3 // indirect
 	github.com/google/pprof v0.0.0-20211214055906-6f57359322fd // indirect
