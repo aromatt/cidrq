@@ -17,13 +17,6 @@ func (p *CidrProcessor) Process(r io.Reader) error {
 	scanner := bufio.NewScanner(r)
 	for scanner.Scan() {
 		line := scanner.Text()
-		//if _, err := fmt.Fscanln(r, &line); err != nil {
-		//	if err == io.EOF {
-		//		break
-		//	} else {
-		//		return err
-		//	}
-		//}
 		prefix, err := p.ParseFn(line)
 		if err != nil {
 			if err = p.ErrFn(err); err != nil {

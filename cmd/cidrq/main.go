@@ -153,18 +153,22 @@ func handleFilter(c *cli.Context) error {
 		}
 	}
 
-	// -field
+	// Set up parser
+	var parser func(string) (netip.Prefix, error)
 	field := c.Int("field")
-
-	// -delimiter
-	delimiter := c.String("delimiter")
-	if delimiter == "\\t" {
-		delimiter = "\t"
+	if field != 0 {
+		delimiter := c.String("delimiter")
+		if delimiter == "\\t" {
+			delimiter = "\t"
+		}
+		parser = parseLine(field, delimiter)
+	} else {
+		parser = cq.ParsePrefixOrAddr
 	}
 
 	// set up processor
 	p := cq.CidrProcessor{
-		ParseFn: parseLine(field, delimiter),
+		ParseFn: parser,
 		ErrFn:   errorHandler,
 		HandlerFn: func(prefix netip.Prefix, line string) error {
 			// Skip prefix if it doesn't overlap with the match list
@@ -210,9 +214,10 @@ func main() {
 		UseShortOptionHandling: true,
 		Flags: []cli.Flag{
 			&cli.StringFlag{
-				Name:  "err",
-				Usage: "Action to take on error (abort, skip, warn)",
-				Value: AbortOnError,
+				Name:    "err",
+				Aliases: []string{"e"},
+				Usage:   "Action to take on error (abort, skip, warn)",
+				Value:   AbortOnError,
 			},
 		},
 		Before: func(c *cli.Context) error {
@@ -234,7 +239,7 @@ func main() {
 				Flags: []cli.Flag{
 					&cli.StringFlag{
 						Name:    "exclude",
-						Aliases: []string{"e"},
+						Aliases: []string{"x"},
 						Usage: "Path to CIDR exclusion list. These CIDRs will " +
 							"be omitted from the output. This may require splitting " +
 							"input CIDRs.",
@@ -265,6 +270,8 @@ func main() {
 			},
 		},
 	}
+
+	//defer profile.Start(profile.ProfilePath(".")).Stop()
 
 	if err := app.Run(os.Args); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)

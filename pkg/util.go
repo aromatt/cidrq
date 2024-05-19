@@ -31,18 +31,22 @@ func Uint32ToBytes(u uint32) [4]byte {
 
 // if the string does end with an explicit subnet mask, then append '/32'
 func EnsurePrefix(s string) string {
-	if s[len(s)-2] != '/' && s[len(s)-3] != '/' {
+	if len(s) < 3 || (s[len(s)-2] != '/' && s[len(s)-3] != '/') {
 		return s + "/32"
 	}
 	return s
 }
 
-func StrSliceToPrefixSlice(cidrStrs []string) []netip.Prefix {
+func StrSliceToPrefixSlice(cidrStrs []string) ([]netip.Prefix, error) {
 	prefixes := make([]netip.Prefix, len(cidrStrs))
 	for i, cidrStr := range cidrStrs {
-		prefixes[i] = netip.MustParsePrefix(EnsurePrefix(cidrStr))
+		p, err := netip.ParsePrefix(EnsurePrefix(cidrStr))
+		if err != nil {
+			return nil, err
+		}
+		prefixes[i] = p
 	}
-	return prefixes
+	return prefixes, nil
 }
 
 func PrefixToIPSetBuilder(prefix netip.Prefix) *netipx.IPSetBuilder {
