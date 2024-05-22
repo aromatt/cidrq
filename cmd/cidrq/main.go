@@ -4,15 +4,14 @@ import (
 	//"flag"
 	"fmt"
 	cli "github.com/urfave/cli/v2"
-	"go4.org/netipx"
 	"io"
 	"net/netip"
 	"os"
 	"strings"
 
 	cq "github.com/aromatt/cidrq/pkg"
-	//profile "github.com/pkg/profile"
 	"github.com/aromatt/netipmap"
+	//profile "github.com/pkg/profile"
 )
 
 const (
@@ -128,8 +127,6 @@ func parseLine(field int, delimiter string) func(string) (netip.Prefix, error) {
 func handleFilter(c *cli.Context) error {
 	var err error
 	var excludePrefixSet, matchPrefixSet *netipmap.PrefixSet
-	// TODO remove this once we can do everything with PrefixSets
-	var excludeIpset *netipx.IPSet
 
 	// -exclude
 	if excludePath := c.String("exclude"); excludePath != "" {
@@ -137,15 +134,6 @@ func handleFilter(c *cli.Context) error {
 		if err != nil {
 			return err
 		}
-		excludeIpsb := netipx.IPSetBuilder{}
-		for _, prefix := range excludePrefixSet.Prefixes() {
-			excludeIpsb.AddPrefix(prefix)
-		}
-		excludeIpset, err = excludeIpsb.IPSet()
-		if err != nil {
-			return err
-		}
-
 	}
 
 	// -match
@@ -156,8 +144,7 @@ func handleFilter(c *cli.Context) error {
 		}
 		if excludePrefixSet != nil {
 			for _, excludePrefix := range excludePrefixSet.Prefixes() {
-				// TODO this needs to be RemoveDescendants
-				matchPsb.Remove(excludePrefix)
+				matchPsb.Subtract(excludePrefix)
 			}
 		}
 		matchPrefixSet = matchPsb.PrefixSet()
@@ -180,18 +167,18 @@ func handleFilter(c *cli.Context) error {
 	p := cq.CidrProcessor{
 		ParseFn: parser,
 		ErrFn:   errorHandler,
-		HandlerFn: func(prefix netip.Prefix, line string) error {
+		HandlerFn: func(p netip.Prefix, line string) error {
 			// Skip prefix if it doesn't overlap with the match list
-			if matchPrefixSet != nil && !matchPrefixSet.OverlapsPrefix(prefix) {
+			if matchPrefixSet != nil && !matchPrefixSet.OverlapsPrefix(p) {
 				return nil
 			}
 
 			// Apply exclusions
 			if excludePrefixSet != nil {
-				if excludePrefixSet.Encompasses(prefix) {
+				if excludePrefixSet.Encompasses(p) {
 					return nil
 				}
-				if excludePrefixSet.OverlapsPrefix(prefix) {
+				if excludePrefixSet.OverlapsPrefix(p) {
 					// If we're printing full lines, only print the line once.
 					// If we're just printing plain CIDRs, then subtract the
 					// excluded portion and print the remainder.
@@ -199,10 +186,7 @@ func handleFilter(c *cli.Context) error {
 						fmt.Println(line)
 					} else {
 						// TODO reimplement with PrefixMap
-						remaining, err := cq.PrefixMinusIPSet(prefix, excludeIpset)
-						if err != nil {
-							return err
-						}
+						remaining := excludePrefixSet.SubtractFromPrefix(p).Prefixes()
 						for _, p := range remaining {
 							fmt.Println(p)
 						}
