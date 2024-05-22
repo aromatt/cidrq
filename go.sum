@@ -8,6 +8,8 @@ github.com/aromatt/netipmap v0.0.0-20240522032234-5b760048829b h1:5SYaA3eWQVNT2r
 github.com/aromatt/netipmap v0.0.0-20240522032234-5b760048829b/go.mod h1:123PivQXvehj+AdaKwuTcmj+ZwbJgsyC9VBWQZNif4w=
 github.com/aromatt/netipmap v0.0.0-20240522032801-f2989bf7c93a h1:xNIIvZaRcD7W4N9G/Gdswojx6DZPdGvn/wioXXrlYxE=
 github.com/aromatt/netipmap v0.0.0-20240522032801-f2989bf7c93a/go.mod h1:123PivQXvehj+AdaKwuTcmj+ZwbJgsyC9VBWQZNif4w=
+github.com/aromatt/netipmap v0.0.0-20240522041924-3e197c339f3e h1:9qHHvcaeD2i/AzDOyRC6FoEkGh2W+00vTaMXYJfCP7k=
+github.com/aromatt/netipmap v0.0.0-20240522041924-3e197c339f3e/go.mod h1:123PivQXvehj+AdaKwuTcmj+ZwbJgsyC9VBWQZNif4w=
 github.com/chzyer/logex v1.1.10/go.mod h1:+Ywpsq7O8HXn0nuIou7OrIPyXbp3wmkHB+jjWRnGsAI=
 github.com/chzyer/readline v0.0.0-20180603132655-2972be24d48e/go.mod h1:nSuG5e5PlCu98SY8svDHJxuZscDgtXS6KTTbou5AhLI=
 github.com/chzyer/test v0.0.0-20180213035817-a1ea475d72b1/go.mod h1:Q3SI9o4m/ZMnBNeIyt5eFwwo7qiLfzFZmjNmxjkiQlU=

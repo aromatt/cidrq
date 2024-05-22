@@ -11,6 +11,7 @@ import (
 
 	cq "github.com/aromatt/cidrq/pkg"
 	"github.com/aromatt/netipmap"
+	"log"
 	//profile "github.com/pkg/profile"
 )
 
@@ -21,6 +22,7 @@ const (
 )
 
 var errorHandler func(error) error
+var logf func(string, ...any)
 
 func setErrorHandler(c *cli.Context) error {
 	v := c.String("err")
@@ -40,6 +42,18 @@ func setErrorHandler(c *cli.Context) error {
 		return fmt.Errorf("Invalid error action %s", v)
 	}
 	return nil
+}
+
+func setVerbose(c *cli.Context) {
+	v := c.Bool("verbose")
+	if v {
+		log.SetFlags(log.LstdFlags | log.Lmicroseconds)
+		logf = func(format string, v ...any) {
+			log.Printf(format, v...)
+		}
+	} else {
+		logf = func(format string, v ...any) {}
+	}
 }
 
 func validatePath(c *cli.Context, v string) error {
@@ -97,7 +111,7 @@ func handleMerge(c *cli.Context) error {
 
 	//fmt.Println(merged.String())
 
-	// Process all inputs
+	logf("Loading input CIDRs\n")
 	err := iterPathArgs(c, func(r io.Reader) error {
 		return p.Process(r)
 	})
@@ -107,6 +121,7 @@ func handleMerge(c *cli.Context) error {
 
 	// Output merged CIDRs
 	mergedIPs := merged.PrefixSet()
+	logf("Done loading CIDRs\n")
 	for _, p := range mergedIPs.Prefixes() {
 		fmt.Println(p)
 	}
@@ -130,6 +145,7 @@ func handleFilter(c *cli.Context) error {
 
 	// -exclude
 	if excludePath := c.String("exclude"); excludePath != "" {
+		logf("Loading exclude file '%s'\n", c.String("exclude"))
 		excludePrefixSet, err = cq.LoadPrefixSetFromFile(excludePath, errorHandler)
 		if err != nil {
 			return err
@@ -138,6 +154,7 @@ func handleFilter(c *cli.Context) error {
 
 	// -match
 	if matchPath := c.String("match"); matchPath != "" {
+		logf("Loading match file '%s'\n", c.String("match"))
 		matchPsb, err := cq.LoadPrefixSetBuilderFromFile(matchPath, errorHandler)
 		if err != nil {
 			return err
@@ -201,6 +218,7 @@ func handleFilter(c *cli.Context) error {
 		},
 	}
 
+	logf("Processing input CIDRs\n")
 	return iterPathArgs(c, func(r io.Reader) error {
 		return p.Process(r)
 	})
@@ -219,8 +237,15 @@ func main() {
 				Usage:   "Action to take on error (abort, skip, warn)",
 				Value:   AbortOnError,
 			},
+			&cli.BoolFlag{
+				Name:    "verbose",
+				Aliases: []string{"v"},
+				Usage:   "Print logs to stderr",
+				Value:   false,
+			},
 		},
 		Before: func(c *cli.Context) error {
+			setVerbose(c)
 			return setErrorHandler(c)
 		},
 		Commands: []*cli.Command{
@@ -276,4 +301,6 @@ func main() {
 	if err := app.Run(os.Args); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 	}
+
+	logf("Done\n")
 }
