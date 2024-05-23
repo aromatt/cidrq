@@ -7,7 +7,7 @@ import (
 	"net/netip"
 	"os"
 
-	"github.com/aromatt/netipmap"
+	"github.com/aromatt/netipds"
 	"go4.org/netipx"
 )
 
@@ -103,6 +103,14 @@ func ParsePrefixOrAddr(s string) (netip.Prefix, error) {
 	return netip.ParsePrefix(EnsurePrefix(s))
 }
 
+func ParseOnePrefixOrAddr(s string) ([]netip.Prefix, error) {
+	p, err := netip.ParsePrefix(EnsurePrefix(s))
+	if err != nil {
+		return nil, err
+	}
+	return []netip.Prefix{p}, nil
+}
+
 func LoadIPSetBuilderFromFile(
 	path string,
 	errFn func(error) error,
@@ -110,9 +118,11 @@ func LoadIPSetBuilderFromFile(
 	ipsb := netipx.IPSetBuilder{}
 
 	p := CidrProcessor{
-		ParseFn: ParsePrefixOrAddr,
-		HandlerFn: func(prefix netip.Prefix, _ string) error {
-			ipsb.AddPrefix(prefix)
+		ParseFn: ParseOnePrefixOrAddr,
+		HandlerFn: func(prefixes []netip.Prefix, _ string) error {
+			for _, prefix := range prefixes {
+				ipsb.AddPrefix(prefix)
+			}
 			return nil
 		},
 		ErrFn: errFn,
@@ -145,13 +155,15 @@ func LoadIPSetFromFile(
 func LoadPrefixSetBuilderFromFile(
 	path string,
 	errFn func(error) error,
-) (*netipmap.PrefixSetBuilder, error) {
-	psb := netipmap.PrefixSetBuilder{}
+) (*netipds.PrefixSetBuilder, error) {
+	psb := netipds.PrefixSetBuilder{}
 
 	p := CidrProcessor{
-		ParseFn: ParsePrefixOrAddr,
-		HandlerFn: func(prefix netip.Prefix, _ string) error {
-			psb.Add(prefix)
+		ParseFn: ParseOnePrefixOrAddr,
+		HandlerFn: func(prefixes []netip.Prefix, _ string) error {
+			for _, prefix := range prefixes {
+				psb.Add(prefix)
+			}
 			return nil
 		},
 		ErrFn: errFn,
@@ -173,7 +185,7 @@ func LoadPrefixSetBuilderFromFile(
 func LoadPrefixSetFromFile(
 	path string,
 	errFn func(error) error,
-) (*netipmap.PrefixSet, error) {
+) (*netipds.PrefixSet, error) {
 	psb, err := LoadPrefixSetBuilderFromFile(path, errFn)
 	if err != nil {
 		return nil, err

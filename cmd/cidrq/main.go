@@ -10,7 +10,7 @@ import (
 	"strings"
 
 	cq "github.com/aromatt/cidrq/pkg"
-	"github.com/aromatt/netipmap"
+	"github.com/aromatt/netipds"
 	"log"
 	//profile "github.com/pkg/profile"
 )
@@ -97,13 +97,15 @@ func iterPathArgs(c *cli.Context, fn func(io.Reader) error) error {
 }
 
 func handleMerge(c *cli.Context) error {
-	merged := netipmap.PrefixSetBuilder{}
+	merged := netipds.PrefixSetBuilder{}
 
 	// Set up processor
 	p := cq.CidrProcessor{
-		ParseFn: cq.ParsePrefixOrAddr,
-		HandlerFn: func(prefix netip.Prefix, line string) error {
-			merged.Add(prefix)
+		ParseFn: cq.ParseOnePrefixOrAddr,
+		HandlerFn: func(prefixes []netip.Prefix, line string) error {
+			for _, prefix := range prefixes {
+				merged.Add(prefix)
+			}
 			return nil
 		},
 		ErrFn: errorHandler,
@@ -128,20 +130,30 @@ func handleMerge(c *cli.Context) error {
 	return nil
 }
 
-func parseLine(field int, delimiter string) func(string) (netip.Prefix, error) {
-	return func(line string) (netip.Prefix, error) {
+func parseLine(fields []int, delimiter string) func(string) ([]netip.Prefix, error) {
+	return func(line string) ([]netip.Prefix, error) {
 		// Split line into fields
-		fields := strings.Split(line, delimiter)
-		if field > len(fields) {
-			return netip.Prefix{}, fmt.Errorf("Field %d not found in line: %s", field, line)
+		parts := strings.Split(line, delimiter)
+		prefixes := []netip.Prefix{}
+		var prefix netip.Prefix
+		var err error
+		for _, f := range fields {
+			if f > len(parts) {
+				return prefixes, fmt.Errorf("Field %d not found in line: %s", f, line)
+			}
+			prefix, err = cq.ParsePrefixOrAddr(parts[f-1])
+			if err != nil {
+				return prefixes, err
+			}
+			prefixes = append(prefixes, prefix)
 		}
-		return cq.ParsePrefixOrAddr(fields[field-1])
+		return prefixes, nil
 	}
 }
 
 func handleFilter(c *cli.Context) error {
 	var err error
-	var excludePrefixSet, matchPrefixSet *netipmap.PrefixSet
+	var excludePrefixSet, matchPrefixSet *netipds.PrefixSet
 
 	// -exclude
 	if excludePath := c.String("exclude"); excludePath != "" {
@@ -168,59 +180,64 @@ func handleFilter(c *cli.Context) error {
 	}
 
 	// Set up parser
-	var parser func(string) (netip.Prefix, error)
-	field := c.Int("field")
-	if field != 0 {
+	var parser func(string) ([]netip.Prefix, error)
+	fields := c.IntSlice("field")
+	if len(fields) != 0 {
 		delimiter := c.String("delimiter")
 		if delimiter == "\\t" {
 			delimiter = "\t"
 		}
-		parser = parseLine(field, delimiter)
+		parser = parseLine(fields, delimiter)
 	} else {
-		parser = cq.ParsePrefixOrAddr
+		parser = cq.ParseOnePrefixOrAddr
 	}
 
 	// set up processor
-	p := cq.CidrProcessor{
+	pr := cq.CidrProcessor{
 		ParseFn: parser,
 		ErrFn:   errorHandler,
-		HandlerFn: func(p netip.Prefix, line string) error {
-			// Skip prefix if it doesn't overlap with the match list
-			if matchPrefixSet != nil && !matchPrefixSet.OverlapsPrefix(p) {
-				return nil
-			}
-
-			// Apply exclusions
-			if excludePrefixSet != nil {
-				if excludePrefixSet.Encompasses(p) {
-					return nil
+		HandlerFn: func(prefixes []netip.Prefix, line string) error {
+			for _, p := range prefixes {
+				// Skip the prefix if it doesn't overlap with the match list.
+				// (Skip the whole line if none of its prefixes match.)
+				if matchPrefixSet != nil && !matchPrefixSet.OverlapsPrefix(p) {
+					continue
 				}
-				if excludePrefixSet.OverlapsPrefix(p) {
-					// If we're printing full lines, only print the line once.
-					// If we're just printing plain CIDRs, then subtract the
-					// excluded portion and print the remainder.
-					if field != 0 {
-						fmt.Println(line)
-					} else {
-						// TODO reimplement with PrefixMap
-						remaining := excludePrefixSet.SubtractFromPrefix(p).Prefixes()
-						for _, p := range remaining {
-							fmt.Println(p)
+
+				// Apply exclusions
+				if excludePrefixSet != nil {
+					if excludePrefixSet.OverlapsPrefix(p) {
+						// If the prefix is fully excluded, skip it.
+						// (If all prefixes in the line are excluded, don't print
+						// anything from the line.)
+						if excludePrefixSet.Encompasses(p) {
+							continue
 						}
+						// If we extracted CIDRs from fields, print the line once.
+						// If each line was a single CIDR, then subtract the
+						// excluded portion and print the remainder.
+						if len(fields) > 0 {
+							fmt.Println(line)
+							return nil
+						} else {
+							remaining := excludePrefixSet.SubtractFromPrefix(p).Prefixes()
+							for _, p := range remaining {
+								fmt.Println(p)
+							}
+						}
+						return nil
 					}
-					return nil
 				}
+				// Prefix made it through the filter unaffected
+				fmt.Println(line)
 			}
-
-			// Prefix made it through the filter unaffected
-			fmt.Println(line)
 			return nil
 		},
 	}
 
 	logf("Processing input CIDRs\n")
 	return iterPathArgs(c, func(r io.Reader) error {
-		return p.Process(r)
+		return pr.Process(r)
 	})
 }
 
@@ -278,12 +295,13 @@ func main() {
 							"-exclude is provided, it will be applied after matching.",
 						Action: validatePath,
 					},
-					&cli.IntFlag{
+					&cli.IntSliceFlag{
 						Name:    "field",
 						Aliases: []string{"f"},
-						Usage: "Instruct cidrq to extract CIDR from a field, " +
-							" where field delimiter is provided via -d. Field " +
-							"extraction does not apply to exclusion or match lists.",
+						Usage: "Instruct cidrq to look for CIDRs in one or more " +
+							"fields, where field delimiter is provided via -d. " +
+							"Parsing is performed only on input CIDRs, not exclusion " +
+							"or match lists.",
 					},
 					&cli.StringFlag{
 						Name:    "delimiter",
