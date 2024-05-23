@@ -12,10 +12,10 @@ DIST_TARGETS := $(patsubst cmd/%,dist/%,$(CMD_DIRS))
 
 all: $(BIN_TARGETS) $(DIST_TARGETS)
 
-$(BIN_TARGETS): $(CMD_SOURCES) $(LIB_SOURCES)
+$(BIN_TARGETS): $(CMD_SOURCES) $(LIB_SOURCES) go.mod go.sum
 	$(GOBUILD) -o $@ ./$(patsubst bin/%,cmd/%,$@)
 
-$(DIST_TARGETS): $(CMD_SOURCES) $(LIB_SOURCES)
+$(DIST_TARGETS): $(CMD_SOURCES) $(LIB_SOURCES) go.mod go.sum
 	GOOS=linux $(GOBUILD) -o $@ ./$(patsubst dist/%,cmd/%,$@)
 
 clean:
