@@ -3,7 +3,7 @@ module github.com/aromatt/cidrq
 go 1.21.5
 
 require (
-	github.com/aromatt/netipmap v0.0.0-20240522041924-3e197c339f3e
+	github.com/aromatt/netipmap v0.0.0-20240523021724-859c16523cef
 	github.com/pkg/profile v1.7.0
 	github.com/urfave/cli/v2 v2.27.2
 	go4.org/netipx v0.0.0-20231129151722-fdeea329fbba
