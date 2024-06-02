@@ -151,6 +151,37 @@ func parseLine(fields []int, delimiter string) func(string) ([]netip.Prefix, err
 	}
 }
 
+func handleValidate(c *cli.Context) error {
+	// Set up parser
+	var parser func(string) ([]netip.Prefix, error)
+	fields := c.IntSlice("field")
+	if len(fields) != 0 {
+		delimiter := c.String("delimiter")
+		if delimiter == "\\t" {
+			delimiter = "\t"
+		}
+		parser = parseLine(fields, delimiter)
+	} else {
+		parser = cq.ParseOnePrefixOrAddr
+	}
+
+	// Set up processor
+	pr := cq.CidrProcessor{
+		ParseFn: parser,
+		ErrFn:   errorHandler,
+		HandlerFn: func(prefixes []netip.Prefix, line string) error {
+			fmt.Println(line)
+			return nil
+		},
+	}
+
+	logf("Processing input CIDRs\n")
+	return iterPathArgs(c, func(r io.Reader) error {
+		return pr.Process(r)
+	})
+
+}
+
 func handleFilter(c *cli.Context) error {
 	var err error
 	var excludePrefixSet, matchPrefixSet *netipds.PrefixSet
@@ -192,7 +223,7 @@ func handleFilter(c *cli.Context) error {
 		parser = cq.ParseOnePrefixOrAddr
 	}
 
-	// set up processor
+	// Set up processor
 	pr := cq.CidrProcessor{
 		ParseFn: parser,
 		ErrFn:   errorHandler,
@@ -272,6 +303,28 @@ func main() {
 				Aliases:   []string{"m"},
 				ArgsUsage: "[paths]",
 				Action:    handleMerge,
+			},
+			{
+				Name:      "validate",
+				Usage:     "Validate CIDRs in input lines",
+				Aliases:   []string{"v"},
+				ArgsUsage: "[paths]",
+				Flags: []cli.Flag{
+					&cli.IntSliceFlag{
+						Name:    "field",
+						Aliases: []string{"f"},
+						Usage: "Instruct cidrq to look for CIDRs in one or more " +
+							"fields, where field delimiter is provided via -d. " +
+							"Parsing is performed only on input CIDRs, not exclusion " +
+							"or match lists.",
+					},
+					&cli.StringFlag{
+						Name:    "delimiter",
+						Aliases: []string{"d"},
+						Usage:   "Delimiter for field separation (use '\\t' for tab).",
+					},
+				},
+				Action: handleValidate,
 			},
 			{
 				Name:      "filter",
