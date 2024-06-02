@@ -18,24 +18,32 @@ const (
 	AbortOnError = "abort"
 	WarnOnError  = "warn"
 	SkipOnError  = "skip"
+	PrintOnError = "print"
 )
 
-var errorHandler func(error) error
+var errorHandler func(string, error) error
 
 func setErrorHandler(c *cli.Context) error {
 	v := c.String("err")
 	switch v {
 	case AbortOnError:
-		errorHandler = func(err error) error { return err }
+		errorHandler = func(line string, err error) error { return err }
 	case WarnOnError:
-		errorHandler = func(err error) error {
+		errorHandler = func(line string, err error) error {
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
 			}
 			return nil
 		}
 	case SkipOnError:
-		errorHandler = func(err error) error { return nil }
+		errorHandler = func(line string, err error) error { return nil }
+	case PrintOnError:
+		errorHandler = func(line string, err error) error {
+			if err != nil {
+				fmt.Fprintln(os.Stderr, line)
+			}
+			return nil
+		}
 	default:
 		return fmt.Errorf("Invalid error action %s", v)
 	}
@@ -271,7 +279,7 @@ func main() {
 			&cli.StringFlag{
 				Name:    "err",
 				Aliases: []string{"e"},
-				Usage:   "Action to take on error (abort, skip, warn)",
+				Usage:   "Action to take on error (abort, skip, warn, print)",
 				Value:   AbortOnError,
 			},
 			&cli.BoolFlag{

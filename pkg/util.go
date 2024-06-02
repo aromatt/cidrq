@@ -113,7 +113,7 @@ func ParseOnePrefixOrAddr(s string) ([]netip.Prefix, error) {
 
 func LoadIPSetBuilderFromFile(
 	path string,
-	errFn func(error) error,
+	errFn func(string, error) error,
 ) (*netipx.IPSetBuilder, error) {
 	ipsb := netipx.IPSetBuilder{}
 
@@ -143,7 +143,7 @@ func LoadIPSetBuilderFromFile(
 
 func LoadIPSetFromFile(
 	path string,
-	errFn func(error) error,
+	errFn func(string, error) error,
 ) (*netipx.IPSet, error) {
 	ipsb, err := LoadIPSetBuilderFromFile(path, errFn)
 	if err != nil {
@@ -154,7 +154,7 @@ func LoadIPSetFromFile(
 
 func LoadPrefixSetBuilderFromFile(
 	path string,
-	errFn func(error) error,
+	errFn func(string, error) error,
 ) (*netipds.PrefixSetBuilder, error) {
 	psb := netipds.PrefixSetBuilder{}
 
@@ -184,7 +184,7 @@ func LoadPrefixSetBuilderFromFile(
 
 func LoadPrefixSetFromFile(
 	path string,
-	errFn func(error) error,
+	errFn func(string, error) error,
 ) (*netipds.PrefixSet, error) {
 	psb, err := LoadPrefixSetBuilderFromFile(path, errFn)
 	if err != nil {

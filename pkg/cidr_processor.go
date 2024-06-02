@@ -10,7 +10,7 @@ import (
 type CidrProcessor struct {
 	ParseFn   func(string) ([]netip.Prefix, error)
 	HandlerFn func([]netip.Prefix, string) error
-	ErrFn     func(error) error
+	ErrFn     func(string, error) error
 }
 
 func (p *CidrProcessor) Process(r io.Reader) error {
@@ -26,12 +26,12 @@ func (p *CidrProcessor) Process(r io.Reader) error {
 		numLines++
 		prefixes, err := p.ParseFn(line)
 		if err != nil {
-			if err = p.ErrFn(err); err != nil {
+			if err = p.ErrFn(line, err); err != nil {
 				return err
 			}
 		} else {
 			if err = p.HandlerFn(prefixes, line); err != nil {
-				if err = p.ErrFn(err); err != nil {
+				if err = p.ErrFn(line, err); err != nil {
 					return err
 				}
 			}
