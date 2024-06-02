@@ -15,8 +15,15 @@ type CidrProcessor struct {
 
 func (p *CidrProcessor) Process(r io.Reader) error {
 	scanner := bufio.NewScanner(r)
+
+	numLines := 0
+
+	buf := make([]byte, 0, 64*1024)
+	scanner.Buffer(buf, 1024*1024*1024)
+
 	for scanner.Scan() {
 		line := scanner.Text()
+		numLines++
 		prefixes, err := p.ParseFn(line)
 		if err != nil {
 			if err = p.ErrFn(err); err != nil {
@@ -30,5 +37,7 @@ func (p *CidrProcessor) Process(r io.Reader) error {
 			}
 		}
 	}
-	return nil
+
+	Logf("Processed %d lines\n", numLines)
+	return scanner.Err()
 }
