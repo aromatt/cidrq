@@ -3,12 +3,12 @@ package pkg
 import (
 	"cmp"
 	"fmt"
-	"io"
 	"net/netip"
+	"net/url"
 	"os"
+	"strings"
 
 	"github.com/aromatt/netipds"
-	"go4.org/netipx"
 )
 
 // https://github.com/golang/go/issues/61642
@@ -22,15 +22,7 @@ func PrefixCompare(p1, p2 netip.Prefix) int {
 	return p1.Addr().Compare(p2.Addr())
 }
 
-func BytesToUint32(b [4]byte) uint32 {
-	return uint32(b[0])<<24 | uint32(b[1])<<16 | uint32(b[2])<<8 | uint32(b[3])
-}
-
-func Uint32ToBytes(u uint32) [4]byte {
-	return [4]byte{byte(u >> 24), byte(u >> 16), byte(u >> 8), byte(u)}
-}
-
-// if the string does end with an explicit subnet mask, then append '/32'
+// If the string does end with an explicit subnet mask, then append '/32'
 func EnsurePrefix(s string) string {
 	if len(s) < 3 || (s[len(s)-2] != '/' && s[len(s)-3] != '/') {
 		return s + "/32"
@@ -38,6 +30,7 @@ func EnsurePrefix(s string) string {
 	return s
 }
 
+// StrSliceToPrefixSlice converts a slice of CIDR strings to a slice of Prefixes.
 func StrSliceToPrefixSlice(cidrStrs []string) ([]netip.Prefix, error) {
 	prefixes := make([]netip.Prefix, len(cidrStrs))
 	for i, cidrStr := range cidrStrs {
@@ -50,106 +43,62 @@ func StrSliceToPrefixSlice(cidrStrs []string) ([]netip.Prefix, error) {
 	return prefixes, nil
 }
 
-func PrefixToIPSetBuilder(prefix netip.Prefix) *netipx.IPSetBuilder {
-	ipsb := netipx.IPSetBuilder{}
-	ipsb.AddPrefix(prefix)
-	return &ipsb
-}
-
-func PrefixMinusIPSet(prefix netip.Prefix, ipset *netipx.IPSet) ([]netip.Prefix, error) {
-	ipsb := netipx.IPSetBuilder{}
-	ipsb.AddPrefix(prefix)
-	ipsb.RemoveSet(ipset)
-	ipset, err := ipsb.IPSet()
-	if err != nil {
-		return nil, err
-	}
-	return ipset.Prefixes(), nil
-}
-
-// TODO instead of passing error handler so much, make a CidrReader struct
-func ReadCidrs(
-	r io.Reader,
-	parseFn func(string) (netip.Prefix, error),
-	cidrFn func(netip.Prefix) error,
-	errFn func(error) error,
-) error {
-	for {
-		var line string
-		if _, err := fmt.Fscanln(r, &line); err != nil {
-			if err == io.EOF {
-				break
-			} else {
-				return err
-			}
-		}
-		prefix, err := parseFn(line)
+// ToSliceOfOneFn converts a function that returns a single value and an error
+// into a function that returns a slice of one value and an error.
+func ToSliceOfOneFn[A, B any](fn func(A) (B, error)) func(A) ([]B, error) {
+	return func(a A) ([]B, error) {
+		b, err := fn(a)
 		if err != nil {
-			if err = errFn(err); err != nil {
-				return err
-			}
-		} else {
-			if err = cidrFn(prefix); err != nil {
-				if err = errFn(err); err != nil {
-					return err
-				}
-			}
+			return nil, err
 		}
+		return []B{b}, nil
 	}
-	return nil
 }
 
+// ParsePrefixOrAddr parses a string as a CIDR prefix or an IP address.
 func ParsePrefixOrAddr(s string) (netip.Prefix, error) {
 	return netip.ParsePrefix(EnsurePrefix(s))
 }
 
-func ParseOnePrefixOrAddr(s string) ([]netip.Prefix, error) {
-	p, err := netip.ParsePrefix(EnsurePrefix(s))
+// ParseUrl parses a string as a URL and returns the host as a CIDR prefix.
+// If the URL is invalid, an error is returned.
+// If the host is not an IP address, an error is returned.
+func ParseUrl(s string) (netip.Prefix, error) {
+	u, err := url.Parse(s)
 	if err != nil {
-		return nil, err
+		return netip.Prefix{}, err
 	}
-	return []netip.Prefix{p}, nil
+	addr, err := netip.ParseAddr(u.Hostname())
+	if err != nil {
+		return netip.Prefix{}, err
+	}
+	return netip.PrefixFrom(addr, addr.BitLen()), nil
 }
 
-func LoadIPSetBuilderFromFile(
-	path string,
-	errFn func(string, error) error,
-) (*netipx.IPSetBuilder, error) {
-	ipsb := netipx.IPSetBuilder{}
-
-	p := CidrProcessor{
-		ParseFn: ParseOnePrefixOrAddr,
-		HandlerFn: func(prefixes []netip.Prefix, _ string) error {
-			for _, prefix := range prefixes {
-				ipsb.AddPrefix(prefix)
+// LineParser returns a function that parses a line into a slice of prefixes.
+func LineParser(
+	fields []int,
+	delimiter string,
+	valParser func(string) (netip.Prefix, error),
+) func(string) ([]netip.Prefix, error) {
+	return func(line string) ([]netip.Prefix, error) {
+		// Split line into fields
+		parts := strings.Split(line, delimiter)
+		prefixes := []netip.Prefix{}
+		var prefix netip.Prefix
+		var err error
+		for _, f := range fields {
+			if f > len(parts) {
+				return prefixes, fmt.Errorf("Field %d not found in line: %s", f, line)
 			}
-			return nil
-		},
-		ErrFn: errFn,
+			prefix, err = valParser(parts[f-1])
+			if err != nil {
+				return prefixes, err
+			}
+			prefixes = append(prefixes, prefix)
+		}
+		return prefixes, nil
 	}
-
-	r, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	defer r.Close()
-
-	err = p.Process(r)
-	if err != nil {
-		return nil, err
-	}
-	return &ipsb, nil
-}
-
-func LoadIPSetFromFile(
-	path string,
-	errFn func(string, error) error,
-) (*netipx.IPSet, error) {
-	ipsb, err := LoadIPSetBuilderFromFile(path, errFn)
-	if err != nil {
-		return nil, err
-	}
-	return ipsb.IPSet()
 }
 
 func LoadPrefixSetBuilderFromFile(
@@ -159,7 +108,7 @@ func LoadPrefixSetBuilderFromFile(
 	psb := netipds.PrefixSetBuilder{}
 
 	p := CidrProcessor{
-		ParseFn: ParseOnePrefixOrAddr,
+		LineParser: ToSliceOfOneFn(ParsePrefixOrAddr),
 		HandlerFn: func(prefixes []netip.Prefix, _ string) error {
 			for _, prefix := range prefixes {
 				psb.Add(prefix)

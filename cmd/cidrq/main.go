@@ -1,13 +1,11 @@
 package main
 
 import (
-	//"flag"
 	"fmt"
 	cli "github.com/urfave/cli/v2"
 	"io"
 	"net/netip"
 	"os"
-	"strings"
 
 	cq "github.com/aromatt/cidrq/pkg"
 	"github.com/aromatt/netipds"
@@ -40,7 +38,7 @@ func setErrorHandler(c *cli.Context) error {
 	case PrintOnError:
 		errorHandler = func(line string, err error) error {
 			if err != nil {
-				fmt.Fprintln(os.Stderr, line)
+				fmt.Println(line)
 			}
 			return nil
 		}
@@ -99,7 +97,7 @@ func handleMerge(c *cli.Context) error {
 
 	// Set up processor
 	p := cq.CidrProcessor{
-		ParseFn: cq.ParseOnePrefixOrAddr,
+		LineParser: cq.ToSliceOfOneFn(cq.ParsePrefixOrAddr),
 		HandlerFn: func(prefixes []netip.Prefix, line string) error {
 			for _, prefix := range prefixes {
 				merged.Add(prefix)
@@ -128,47 +126,36 @@ func handleMerge(c *cli.Context) error {
 	return nil
 }
 
-func parseLine(fields []int, delimiter string) func(string) ([]netip.Prefix, error) {
-	return func(line string) ([]netip.Prefix, error) {
-		// Split line into fields
-		parts := strings.Split(line, delimiter)
-		prefixes := []netip.Prefix{}
-		var prefix netip.Prefix
-		var err error
-		for _, f := range fields {
-			if f > len(parts) {
-				return prefixes, fmt.Errorf("Field %d not found in line: %s", f, line)
-			}
-			prefix, err = cq.ParsePrefixOrAddr(parts[f-1])
-			if err != nil {
-				return prefixes, err
-			}
-			prefixes = append(prefixes, prefix)
-		}
-		return prefixes, nil
-	}
-}
-
 func handleValidate(c *cli.Context) error {
 	// Set up parser
-	var parser func(string) ([]netip.Prefix, error)
+	var valParser func(string) (netip.Prefix, error)
+	var lineParser func(string) ([]netip.Prefix, error)
 	fields := c.IntSlice("field")
+	if c.Bool("url") {
+		valParser = cq.ParseUrl
+	} else {
+		valParser = cq.ParsePrefixOrAddr
+	}
 	if len(fields) != 0 {
 		delimiter := c.String("delimiter")
 		if delimiter == "\\t" {
 			delimiter = "\t"
 		}
-		parser = parseLine(fields, delimiter)
+		lineParser = cq.LineParser(fields, delimiter, valParser)
 	} else {
-		parser = cq.ParseOnePrefixOrAddr
+		lineParser = cq.ToSliceOfOneFn(valParser)
 	}
+
+	quiet := c.Bool("quiet")
 
 	// Set up processor
 	pr := cq.CidrProcessor{
-		ParseFn: parser,
-		ErrFn:   errorHandler,
+		LineParser: lineParser,
+		ErrFn:      errorHandler,
 		HandlerFn: func(prefixes []netip.Prefix, line string) error {
-			fmt.Println(line)
+			if !quiet {
+				fmt.Println(line)
+			}
 			return nil
 		},
 	}
@@ -208,22 +195,28 @@ func handleFilter(c *cli.Context) error {
 	}
 
 	// Set up parser
-	var parser func(string) ([]netip.Prefix, error)
+	var valParser func(string) (netip.Prefix, error)
+	var lineParser func(string) ([]netip.Prefix, error)
 	fields := c.IntSlice("field")
+	if c.Bool("url") {
+		valParser = cq.ParseUrl
+	} else {
+		valParser = cq.ParsePrefixOrAddr
+	}
 	if len(fields) != 0 {
 		delimiter := c.String("delimiter")
 		if delimiter == "\\t" {
 			delimiter = "\t"
 		}
-		parser = parseLine(fields, delimiter)
+		lineParser = cq.LineParser(fields, delimiter, valParser)
 	} else {
-		parser = cq.ParseOnePrefixOrAddr
+		lineParser = cq.ToSliceOfOneFn(valParser)
 	}
 
 	// Set up processor
 	pr := cq.CidrProcessor{
-		ParseFn: parser,
-		ErrFn:   errorHandler,
+		LineParser: lineParser,
+		ErrFn:      errorHandler,
 		HandlerFn: func(prefixes []netip.Prefix, line string) error {
 			for _, p := range prefixes {
 				// Skip the prefix if it doesn't overlap with the match list.
@@ -319,6 +312,17 @@ func main() {
 						Name:    "delimiter",
 						Aliases: []string{"d"},
 						Usage:   "Delimiter for field separation (use '\\t' for tab).",
+					},
+					&cli.BoolFlag{
+						Name:    "quiet",
+						Aliases: []string{"q"},
+						Usage:   "Suppress stdout. If err == print, err lines are still printed.",
+						Value:   false,
+					},
+					&cli.BoolFlag{
+						Name:    "url",
+						Aliases: []string{"u"},
+						Usage:   "Count URLs as valid if the host is a valid IP.",
 					},
 				},
 				Action: handleValidate,

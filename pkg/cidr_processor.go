@@ -8,9 +8,9 @@ import (
 )
 
 type CidrProcessor struct {
-	ParseFn   func(string) ([]netip.Prefix, error)
-	HandlerFn func([]netip.Prefix, string) error
-	ErrFn     func(string, error) error
+	LineParser func(string) ([]netip.Prefix, error)
+	HandlerFn  func([]netip.Prefix, string) error
+	ErrFn      func(string, error) error
 }
 
 func (p *CidrProcessor) Process(r io.Reader) error {
@@ -24,7 +24,7 @@ func (p *CidrProcessor) Process(r io.Reader) error {
 	for scanner.Scan() {
 		line := scanner.Text()
 		numLines++
-		prefixes, err := p.ParseFn(line)
+		prefixes, err := p.LineParser(line)
 		if err != nil {
 			if err = p.ErrFn(line, err); err != nil {
 				return err
