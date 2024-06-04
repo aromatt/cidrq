@@ -2,12 +2,10 @@ package pkg
 
 import (
 	"cmp"
-	"fmt"
 	"net"
 	"net/netip"
 	"net/url"
 	"os"
-	"strings"
 
 	"github.com/aromatt/netipds"
 )
@@ -29,6 +27,15 @@ func EnsurePrefix(s string) string {
 		return s + "/32"
 	}
 	return s
+}
+
+// StringMaybeAddr returns the Prefix as a string, stripping the prefix length
+// if the Prefix is a single IP.
+func StringMaybeAddr(p netip.Prefix) string {
+	if p.Bits() == p.Addr().BitLen() {
+		return p.Addr().String()
+	}
+	return p.String()
 }
 
 // StrSliceToPrefixSlice converts a slice of CIDR strings to a slice of Prefixes.
@@ -102,32 +109,6 @@ func ValParser(acceptUrl bool, acceptHostPort bool) func(string) (netip.Prefix, 
 	}
 }
 
-// LineParser returns a function that parses a line into a slice of prefixes.
-func LineParser(
-	fields []int,
-	delimiter string,
-	valParser func(string) (netip.Prefix, error),
-) func(string) ([]netip.Prefix, error) {
-	return func(line string) ([]netip.Prefix, error) {
-		// Split line into fields
-		parts := strings.Split(line, delimiter)
-		prefixes := []netip.Prefix{}
-		var prefix netip.Prefix
-		var err error
-		for _, f := range fields {
-			if f > len(parts) {
-				return prefixes, fmt.Errorf("Field %d not found in line: %s", f, line)
-			}
-			prefix, err = valParser(parts[f-1])
-			if err != nil {
-				return prefixes, err
-			}
-			prefixes = append(prefixes, prefix)
-		}
-		return prefixes, nil
-	}
-}
-
 func LoadPrefixSetBuilderFromFile(
 	path string,
 	errFn func(string, error) error,
@@ -135,9 +116,9 @@ func LoadPrefixSetBuilderFromFile(
 	psb := netipds.PrefixSetBuilder{}
 
 	p := CidrProcessor{
-		LineParser: ToSliceOfOneFn(ParsePrefixOrAddr),
-		HandlerFn: func(prefixes []netip.Prefix, _ string) error {
-			for _, prefix := range prefixes {
+		ValParser: ParsePrefixOrAddr,
+		HandlerFn: func(parsed *ParsedLine) error {
+			for _, prefix := range parsed.Prefixes {
 				psb.Add(prefix)
 			}
 			return nil

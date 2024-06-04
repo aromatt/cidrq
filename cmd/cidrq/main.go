@@ -4,7 +4,6 @@ import (
 	"fmt"
 	cli "github.com/urfave/cli/v2"
 	"io"
-	"net/netip"
 	"os"
 
 	cq "github.com/aromatt/cidrq/pkg"
@@ -97,17 +96,15 @@ func handleMerge(c *cli.Context) error {
 
 	// Set up processor
 	p := cq.CidrProcessor{
-		LineParser: cq.ToSliceOfOneFn(cq.ParsePrefixOrAddr),
-		HandlerFn: func(prefixes []netip.Prefix, line string) error {
-			for _, prefix := range prefixes {
+		ValParser: cq.ParsePrefixOrAddr,
+		HandlerFn: func(parsed *cq.ParsedLine) error {
+			for _, prefix := range parsed.Prefixes {
 				merged.Add(prefix)
 			}
 			return nil
 		},
 		ErrFn: errorHandler,
 	}
-
-	//fmt.Println(merged.String())
 
 	cq.Logf("Loading input CIDRs\n")
 	err := iterPathArgs(c, func(r io.Reader) error {
@@ -121,126 +118,90 @@ func handleMerge(c *cli.Context) error {
 	mergedIPs := merged.PrefixSet()
 	cq.Logf("Done loading CIDRs\n")
 	for _, p := range mergedIPs.Prefixes() {
-		fmt.Println(p)
+		fmt.Println(cq.StringMaybeAddr(p))
 	}
 	return nil
 }
 
-func handleValidate(c *cli.Context) error {
-	// Set up parser
-	var lineParser func(string) ([]netip.Prefix, error)
-	valParser := cq.ValParser(c.Bool("url"), c.Bool("port"))
-	fields := c.IntSlice("field")
-	if len(fields) != 0 {
-		delimiter := c.String("delimiter")
-		if delimiter == "\\t" {
-			delimiter = "\t"
-		}
-		lineParser = cq.LineParser(fields, delimiter, valParser)
-	} else {
-		lineParser = cq.ToSliceOfOneFn(valParser)
-	}
-
-	quiet := c.Bool("quiet")
-
-	// Set up processor
-	pr := cq.CidrProcessor{
-		LineParser: lineParser,
-		ErrFn:      errorHandler,
-		HandlerFn: func(prefixes []netip.Prefix, line string) error {
-			if !quiet {
-				fmt.Println(line)
-			}
-			return nil
-		},
-	}
-
-	cq.Logf("Processing input CIDRs\n")
-	return iterPathArgs(c, func(r io.Reader) error {
-		return pr.Process(r)
-	})
-}
-
+// TODO: introduce different filter modes (current behavior is --inclusive)
+//
+//	--inclusive: print prefix if match.overlaps(p) && !exclude.encompasses(p)
+//	--exclusive: print prefix if match.encompasses(p) && !exclude.overlaps(p)
+//	--selective(*): print match.intersection(p).subtract(exclude)
+//
+// (*): though this should probably be its own subcommand
+//
+// TODO: filter should only output <= 1 line per input line.
 func handleFilter(c *cli.Context) error {
 	var err error
 	var excludePrefixSet, matchPrefixSet *netipds.PrefixSet
 
-	// -exclude
-	if excludePath := c.String("exclude"); excludePath != "" {
-		cq.Logf("Loading exclude file '%s'\n", c.String("exclude"))
-		excludePrefixSet, err = cq.LoadPrefixSetFromFile(excludePath, errorHandler)
-		if err != nil {
-			return err
-		}
-	}
+	quiet := c.Bool("quiet")
+	clean := c.Bool("clean")
 
-	// -match
-	if matchPath := c.String("match"); matchPath != "" {
-		cq.Logf("Loading match file '%s'\n", c.String("match"))
-		matchPsb, err := cq.LoadPrefixSetBuilderFromFile(matchPath, errorHandler)
-		if err != nil {
-			return err
-		}
-		if excludePrefixSet != nil {
-			for _, excludePrefix := range excludePrefixSet.Prefixes() {
-				matchPsb.Subtract(excludePrefix)
+	if !quiet {
+		// --exclude
+		if excludePath := c.String("exclude"); excludePath != "" {
+			cq.Logf("Loading exclude file '%s'\n", c.String("exclude"))
+			excludePrefixSet, err = cq.LoadPrefixSetFromFile(excludePath, errorHandler)
+			if err != nil {
+				return err
 			}
 		}
-		matchPrefixSet = matchPsb.PrefixSet()
-	}
 
-	// Set up parser
-	var lineParser func(string) ([]netip.Prefix, error)
-	valParser := cq.ValParser(c.Bool("url"), c.Bool("port"))
-	fields := c.IntSlice("field")
-	if len(fields) != 0 {
-		delimiter := c.String("delimiter")
-		if delimiter == "\\t" {
-			delimiter = "\t"
+		// --match
+		if matchPath := c.String("match"); matchPath != "" {
+			cq.Logf("Loading match file '%s'\n", c.String("match"))
+			matchPsb, err := cq.LoadPrefixSetBuilderFromFile(matchPath, errorHandler)
+			if err != nil {
+				return err
+			}
+			if excludePrefixSet != nil {
+				for _, excludePrefix := range excludePrefixSet.Prefixes() {
+					matchPsb.Subtract(excludePrefix)
+				}
+			}
+			matchPrefixSet = matchPsb.PrefixSet()
 		}
-		lineParser = cq.LineParser(fields, delimiter, valParser)
-	} else {
-		lineParser = cq.ToSliceOfOneFn(valParser)
 	}
 
 	// Set up processor
+	fields := c.IntSlice("field")
 	pr := cq.CidrProcessor{
-		LineParser: lineParser,
-		ErrFn:      errorHandler,
-		HandlerFn: func(prefixes []netip.Prefix, line string) error {
-			for _, p := range prefixes {
+		Fields:    fields,
+		Delimiter: c.String("delimiter"),
+		ValParser: cq.ValParser(c.Bool("url"), c.Bool("port")),
+		ErrFn:     errorHandler,
+		HandlerFn: func(parsed *cq.ParsedLine) error {
+			anyPassed := false
+			for _, p := range parsed.Prefixes {
+				// In quiet mode, all the filter does is parse and validate input.
+				if quiet {
+					continue
+				}
+
 				// Skip the prefix if it doesn't overlap with the match list.
-				// (Skip the whole line if none of its prefixes match.)
 				if matchPrefixSet != nil && !matchPrefixSet.OverlapsPrefix(p) {
 					continue
 				}
 
-				// Apply exclusions
-				if excludePrefixSet != nil {
-					if excludePrefixSet.OverlapsPrefix(p) {
-						// If the prefix is fully excluded, skip it.
-						// (If all prefixes in the line are excluded, don't print
-						// anything from the line.)
-						if excludePrefixSet.Encompasses(p) {
-							continue
-						}
-						// If we extracted CIDRs from fields, print the line once.
-						// If each line was a single CIDR, then subtract the
-						// excluded portion and print the remainder.
-						if len(fields) > 0 {
-							fmt.Println(line)
-							return nil
-						} else {
-							remaining := excludePrefixSet.SubtractFromPrefix(p).Prefixes()
-							for _, p := range remaining {
-								fmt.Println(p)
-							}
-						}
-						return nil
-					}
+				// Skip the prefix if it's encompassed by the exclude list.
+				// TODO: this should definitely be "covered by", but PrefixSet
+				// doesn't have that yet.
+				if excludePrefixSet != nil && excludePrefixSet.Encompasses(p) {
+					continue
 				}
-				// Prefix made it through the filter unaffected
-				fmt.Println(line)
+				anyPassed = true
+			}
+
+			if !anyPassed {
+				return nil
+			}
+
+			if clean {
+				fmt.Println(parsed.Clean())
+			} else {
+				fmt.Println(parsed.Raw)
 			}
 			return nil
 		},
@@ -285,44 +246,6 @@ func main() {
 				Action:    handleMerge,
 			},
 			{
-				Name:      "validate",
-				Usage:     "Validate CIDRs in input lines",
-				Aliases:   []string{"v"},
-				ArgsUsage: "[paths]",
-				Flags: []cli.Flag{
-					&cli.IntSliceFlag{
-						Name:    "field",
-						Aliases: []string{"f"},
-						Usage: "Instruct cidrq to look for CIDRs in one or more " +
-							"fields, where field delimiter is provided via -d. " +
-							"Parsing is performed only on input CIDRs, not exclusion " +
-							"or match lists.",
-					},
-					&cli.StringFlag{
-						Name:    "delimiter",
-						Aliases: []string{"d"},
-						Usage:   "Delimiter for field separation (use '\\t' for tab).",
-					},
-					&cli.BoolFlag{
-						Name:    "quiet",
-						Aliases: []string{"q"},
-						Usage:   "Suppress stdout. If err == print, err lines are still printed.",
-						Value:   false,
-					},
-					&cli.BoolFlag{
-						Name:    "url",
-						Aliases: []string{"u"},
-						Usage:   "Accept a URL as valid if the hostname is a valid IP.",
-					},
-					&cli.BoolFlag{
-						Name:    "port",
-						Aliases: []string{"p"},
-						Usage:   "Accept a host[:port] as valid if the host is a valid IP.",
-					},
-				},
-				Action: handleValidate,
-			},
-			{
 				Name:      "filter",
 				Usage:     "Filter lists of CIDRs",
 				Aliases:   []string{"f"},
@@ -356,6 +279,28 @@ func main() {
 						Name:    "delimiter",
 						Aliases: []string{"d"},
 						Usage:   "Delimiter for field separation (use '\\t' for tab).",
+					},
+					&cli.BoolFlag{
+						Name:    "quiet",
+						Aliases: []string{"q"},
+						Usage:   "Suppress stdout. If err == print, err lines are still printed.",
+						Value:   false,
+					},
+					&cli.BoolFlag{
+						Name:    "clean",
+						Aliases: []string{"c"},
+						Usage:   "Replace selected fields with their respective parsed CIDRs",
+						Value:   false,
+					},
+					&cli.BoolFlag{
+						Name:    "url",
+						Aliases: []string{"u"},
+						Usage:   "Accept a URL as valid if the hostname is a valid IP.",
+					},
+					&cli.BoolFlag{
+						Name:    "port",
+						Aliases: []string{"p"},
+						Usage:   "Accept a host[:port] as valid if the host is a valid IP.",
 					},
 				},
 				Action: handleFilter,
