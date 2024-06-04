@@ -3,6 +3,7 @@ package pkg
 import (
 	"cmp"
 	"fmt"
+	"net"
 	"net/netip"
 	"net/url"
 	"os"
@@ -60,7 +61,17 @@ func ParsePrefixOrAddr(s string) (netip.Prefix, error) {
 	return netip.ParsePrefix(EnsurePrefix(s))
 }
 
-// ParseUrl parses a string as a URL and returns the host as a CIDR prefix.
+// ParseHost parses a string as an IP with an optional :port suffix and returns
+// the IP as a netip.Prefix.
+func ParseHost(s string) (netip.Prefix, error) {
+	host, _, err := net.SplitHostPort(s)
+	if err != nil {
+		host = s
+	}
+	return netip.ParsePrefix(EnsurePrefix(host))
+}
+
+// ParseUrl parses a string as a URL and returns the host as a netip.Prefix.
 // If the URL is invalid, an error is returned.
 // If the host is not an IP address, an error is returned.
 func ParseUrl(s string) (netip.Prefix, error) {
@@ -68,11 +79,27 @@ func ParseUrl(s string) (netip.Prefix, error) {
 	if err != nil {
 		return netip.Prefix{}, err
 	}
-	addr, err := netip.ParseAddr(u.Hostname())
-	if err != nil {
-		return netip.Prefix{}, err
+	return netip.ParsePrefix(EnsurePrefix(u.Hostname()))
+}
+
+func ValParser(acceptUrl bool, acceptHostPort bool) func(string) (netip.Prefix, error) {
+	return func(s string) (netip.Prefix, error) {
+		var err error
+		var p netip.Prefix
+		if acceptUrl {
+			p, err = ParseUrl(s)
+			if err == nil {
+				return p, nil
+			}
+		}
+		if acceptHostPort {
+			p, err = ParseHost(s)
+			if err == nil {
+				return p, nil
+			}
+		}
+		return ParsePrefixOrAddr(s)
 	}
-	return netip.PrefixFrom(addr, addr.BitLen()), nil
 }
 
 // LineParser returns a function that parses a line into a slice of prefixes.

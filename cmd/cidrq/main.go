@@ -128,14 +128,9 @@ func handleMerge(c *cli.Context) error {
 
 func handleValidate(c *cli.Context) error {
 	// Set up parser
-	var valParser func(string) (netip.Prefix, error)
 	var lineParser func(string) ([]netip.Prefix, error)
+	valParser := cq.ValParser(c.Bool("url"), c.Bool("port"))
 	fields := c.IntSlice("field")
-	if c.Bool("url") {
-		valParser = cq.ParseUrl
-	} else {
-		valParser = cq.ParsePrefixOrAddr
-	}
 	if len(fields) != 0 {
 		delimiter := c.String("delimiter")
 		if delimiter == "\\t" {
@@ -195,14 +190,9 @@ func handleFilter(c *cli.Context) error {
 	}
 
 	// Set up parser
-	var valParser func(string) (netip.Prefix, error)
 	var lineParser func(string) ([]netip.Prefix, error)
+	valParser := cq.ValParser(c.Bool("url"), c.Bool("port"))
 	fields := c.IntSlice("field")
-	if c.Bool("url") {
-		valParser = cq.ParseUrl
-	} else {
-		valParser = cq.ParsePrefixOrAddr
-	}
 	if len(fields) != 0 {
 		delimiter := c.String("delimiter")
 		if delimiter == "\\t" {
@@ -322,7 +312,12 @@ func main() {
 					&cli.BoolFlag{
 						Name:    "url",
 						Aliases: []string{"u"},
-						Usage:   "Count URLs as valid if the host is a valid IP.",
+						Usage:   "Accept a URL as valid if the hostname is a valid IP.",
+					},
+					&cli.BoolFlag{
+						Name:    "port",
+						Aliases: []string{"p"},
+						Usage:   "Accept a host[:port] as valid if the host is a valid IP.",
 					},
 				},
 				Action: handleValidate,
