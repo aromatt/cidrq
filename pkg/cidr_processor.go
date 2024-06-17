@@ -78,7 +78,7 @@ func (p *ParsedLine) Clean() string {
 
 func (p *CidrProcessor) parseLine(line string) (*ParsedLine, error) {
 	parsed := ParsedLine{Raw: line}
-	if len(p.Fields) != 0 {
+	if len(p.Fields) > 0 {
 		if p.Delimiter == "\\t" {
 			p.Delimiter = "\t"
 		}
@@ -99,13 +99,14 @@ func (p *CidrProcessor) parseLine(line string) (*ParsedLine, error) {
 			parsed.fields[f-1] = true
 		}
 		return &parsed, nil
+	} else {
+		prefix, err := p.ValParser(line)
+		if err != nil {
+			return nil, err
+		}
+		parsed.Prefixes = append(parsed.Prefixes, prefix)
+		return &parsed, nil
 	}
-	prefix, err := p.ValParser(line)
-	if err != nil {
-		return nil, err
-	}
-	parsed.Prefixes = append(parsed.Prefixes, prefix)
-	return &parsed, nil
 }
 
 func (p *CidrProcessor) Process(r io.Reader) error {
