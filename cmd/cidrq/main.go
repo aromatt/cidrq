@@ -56,7 +56,12 @@ func setVerbose(c *cli.Context) {
 
 // Reduce operations
 
-type ReduceOpFn func(*netipds.PrefixSet, *netipds.PrefixSet) *netipds.PrefixSet
+// ReduceOpFn performs an operation on a PrefixSetBuilder some PrefixSet as
+// input.
+type ReduceOpFn func(
+	*netipds.PrefixSetBuilder,
+	*netipds.PrefixSet,
+) *netipds.PrefixSetBuilder
 
 type ReduceOp struct {
 	OpFn ReduceOpFn
@@ -134,6 +139,23 @@ func iterPathArgs(c *cli.Context, fn func(io.Reader) error) error {
 	return nil
 }
 
+func prefixSetMembershipFn(mode string) func(*netipds.PrefixSet, netip.Prefix) bool {
+	switch mode {
+	case "overlap":
+		return func(ps *netipds.PrefixSet, p netip.Prefix) bool {
+			return ps.OverlapsPrefix(p)
+		}
+	case "encompass":
+		return func(ps *netipds.PrefixSet, p netip.Prefix) bool {
+			return ps.Encompasses(p)
+		}
+	// TODO add "cover" mode - returns true if the prefix can be covered by any
+	// subset of prefixes in the set. Do this once PrefixSet has a Covers method.
+	default:
+		panic("Invalid mode")
+	}
+}
+
 // Subcommand handlers
 
 func handleReduce(c *cli.Context) error {
@@ -167,23 +189,6 @@ func handleReduce(c *cli.Context) error {
 		fmt.Println(cq.StringMaybeAddr(p))
 	}
 	return nil
-}
-
-func prefixSetMembershipFn(mode string) func(*netipds.PrefixSet, netip.Prefix) bool {
-	switch mode {
-	case "overlap":
-		return func(ps *netipds.PrefixSet, p netip.Prefix) bool {
-			return ps.OverlapsPrefix(p)
-		}
-	case "encompass":
-		return func(ps *netipds.PrefixSet, p netip.Prefix) bool {
-			return ps.Encompasses(p)
-		}
-	// TODO add "cover" mode - returns true if the prefix can be covered by any
-	// subset of prefixes in the set. Do this once PrefixSet has a Covers method.
-	default:
-		panic("Invalid mode")
-	}
 }
 
 func handleFilter(c *cli.Context) error {
@@ -267,6 +272,39 @@ func handleFilter(c *cli.Context) error {
 	})
 }
 
+func handleSort(c *cli.Context) error {
+	sorted := netipds.PrefixSetBuilder{}
+
+	// Set up processor
+	p := cq.CidrProcessor{
+		ValParser: cq.ParsePrefixOrAddr,
+		HandlerFn: func(parsed *cq.ParsedLine) error {
+			for _, prefix := range parsed.Prefixes {
+				// TODO need a way to merge redundant prefixes
+				sorted.Add(prefix)
+			}
+			return nil
+		},
+		ErrFn: errorHandler,
+	}
+
+	cq.Logf("Loading input CIDRs\n")
+	err := iterPathArgs(c, func(r io.Reader) error {
+		return p.Process(r)
+	})
+	if err != nil {
+		return err
+	}
+
+	// Output sorted CIDR set
+	sortedPrefixSet := sorted.PrefixSet()
+	cq.Logf("Done loading CIDRs\n")
+	for _, p := range sortedPrefixSet.Prefixes() {
+		fmt.Println(cq.StringMaybeAddr(p))
+	}
+	return nil
+}
+
 func main() {
 	// set args for examples sake
 	app := &cli.App{
@@ -297,50 +335,57 @@ func main() {
 			{
 				Name:  "reduce",
 				Usage: "Combine lists of CIDRs",
-				Description: "Provide files containing lists of CIDRs using " +
-					"--union (-u), --intersect (-i), or --subtract (-s). CIDR " +
-					"lists are processed in the order they are provided. The " +
-					"output is a compacted list of CIDRs.",
+				//Description: "Provide files containing lists of CIDRs using " +
+				//	"--union (-u), --intersect (-i), or --subtract (-s). CIDR " +
+				//	"lists are processed in the order they are provided. The " +
+				//	"output is a compacted list of CIDRs.",
 				Aliases:   []string{"r"},
 				ArgsUsage: "[paths]",
 				Action:    handleReduce,
-				Flags: []cli.Flag{
-					&cli.StringFlag{
-						Name:    "union",
-						Aliases: []string{"u"},
-						Usage: "Return the union of these CIDRs with the " +
-							"working set.",
-						Action: func(c *cli.Context, v string) error {
-							// TODO
-							//reduceOps = append(reduceOps, ReduceOp{OpFn: Union, Path: v})
-							return nil
-						},
-					},
-					&cli.StringFlag{
-						Name:    "intersect",
-						Aliases: []string{"i"},
-						Usage: "Return the intersection of these CIDRs with the " +
-							"working set.",
-						Action: func(c *cli.Context, v string) error {
-							// TODO
-							//reduceOps = append(reduceOps, ReduceOp{OpFn: Intersect, Path: v})
-							return nil
-						},
-					},
-					&cli.StringFlag{
-						Name:    "subtract",
-						Aliases: []string{"s"},
-						Usage: "Subtract these CIDRs from the working set. " +
-							"If a subtracted CIDR is a child of a working-set " +
-							"CIDR, then the working-set CIDR will be split, " +
-							"leaving behind the remaining portion.",
-						Action: func(c *cli.Context, v string) error {
-							// TODO
-							//reduceOps = append(reduceOps, ReduceOp{OpFn: Subtract, Path: v})
-							return nil
-						},
-					},
-				},
+				//Flags: []cli.Flag{
+				//	&cli.StringFlag{
+				//		Name:    "union",
+				//		Aliases: []string{"u"},
+				//		Usage: "Return the union of these CIDRs with the " +
+				//			"working set.",
+				//		Action: func(c *cli.Context, v string) error {
+				//			// TODO
+				//			//reduceOps = append(reduceOps, ReduceOp{OpFn: Union, Path: v})
+				//			return nil
+				//		},
+				//	},
+				//	&cli.StringFlag{
+				//		Name:    "intersect",
+				//		Aliases: []string{"i"},
+				//		Usage: "Return the intersection of these CIDRs with the " +
+				//			"working set.",
+				//		Action: func(c *cli.Context, v string) error {
+				//			// TODO
+				//			//reduceOps = append(reduceOps, ReduceOp{OpFn: Intersect, Path: v})
+				//			return nil
+				//		},
+				//	},
+				//	&cli.StringFlag{
+				//		Name:    "subtract",
+				//		Aliases: []string{"s"},
+				//		Usage: "Subtract these CIDRs from the working set. " +
+				//			"If a subtracted CIDR is a child of a working-set " +
+				//			"CIDR, then the working-set CIDR will be split, " +
+				//			"leaving behind the remaining portion.",
+				//		Action: func(c *cli.Context, v string) error {
+				//			// TODO
+				//			//reduceOps = append(reduceOps, ReduceOp{OpFn: Subtract, Path: v})
+				//			return nil
+				//		},
+				//	},
+				//},
+			},
+			{
+				Name:      "sort",
+				Usage:     "Sort lists of CIDRs",
+				Aliases:   []string{"s"},
+				ArgsUsage: "[paths]",
+				Action:    handleSort,
 			},
 			{
 				Name:      "filter",

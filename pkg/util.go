@@ -23,10 +23,19 @@ func PrefixCompare(p1, p2 netip.Prefix) int {
 
 // If the string does end with an explicit subnet mask, then append '/32'
 func EnsurePrefix(s string) string {
-	if len(s) < 3 || (s[len(s)-2] != '/' && s[len(s)-3] != '/') {
-		return s + "/32"
+	isIpv6 := false
+	for _, c := range s {
+		if c == '/' {
+			return s
+		}
+		if c == ':' {
+			isIpv6 = true
+		}
 	}
-	return s
+	if isIpv6 {
+		return s + "/128"
+	}
+	return s + "/32"
 }
 
 // StringMaybeAddr returns the Prefix as a string, stripping the prefix length
