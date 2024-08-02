@@ -3,7 +3,7 @@ module github.com/aromatt/cidrq
 go 1.21.5
 
 require (
-	github.com/aromatt/netipds v0.1.2
+	github.com/aromatt/netipds v0.1.3
 	github.com/urfave/cli/v2 v2.27.3
 	golang.org/x/term v0.22.0
 )
