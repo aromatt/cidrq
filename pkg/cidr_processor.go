@@ -8,6 +8,8 @@ import (
 	"strings"
 )
 
+// CidrProcessor consolidates all of the configuration provided by a user for
+// processing lists of CIDRs.
 type CidrProcessor struct {
 	Fields    []int
 	Delimiter string
@@ -109,6 +111,8 @@ func (p *CidrProcessor) parseLine(line string) (*ParsedLine, error) {
 	}
 }
 
+// Process parses all lines from the provided reader and calls p.HandlerFn on
+// each parsed line, handling errors with p.ErrFn.
 func (p *CidrProcessor) Process(r io.Reader) error {
 	scanner := bufio.NewScanner(r)
 

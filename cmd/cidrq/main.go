@@ -2,14 +2,14 @@ package main
 
 import (
 	"fmt"
-	cli "github.com/urfave/cli/v2"
 	"io"
+	"net/netip"
 	"os"
 
 	cq "github.com/aromatt/cidrq/pkg"
 	"github.com/aromatt/netipds"
-	"net/netip"
-	//profile "github.com/pkg/profile"
+	"github.com/urfave/cli/v2"
+	"golang.org/x/term"
 )
 
 // Error handling
@@ -27,20 +27,20 @@ func setErrorHandler(c *cli.Context) error {
 	v := c.String("err")
 	switch v {
 	case AbortOnError:
-		errorHandler = func(line string, err error) error { return err }
+		errorHandler = func(l string, e error) error { return e }
 	case WarnOnError:
-		errorHandler = func(line string, err error) error {
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
+		errorHandler = func(l string, e error) error {
+			if e != nil {
+				fmt.Fprintf(os.Stderr, "Warning: %v\n", e)
 			}
 			return nil
 		}
 	case SkipOnError:
-		errorHandler = func(line string, err error) error { return nil }
+		errorHandler = func(l string, e error) error { return nil }
 	case PrintOnError:
-		errorHandler = func(line string, err error) error {
-			if err != nil {
-				fmt.Println(line)
+		errorHandler = func(l string, e error) error {
+			if e != nil {
+				fmt.Println(l)
 			}
 			return nil
 		}
@@ -56,30 +56,26 @@ func setVerbose(c *cli.Context) {
 
 // Reduce operations
 
-// ReduceOpFn performs an operation on a PrefixSetBuilder some PrefixSet as
+// ReduceOpFn performs an operation on a PrefixSetBuilder using a PrefixSet as
 // input.
-type ReduceOpFn func(
-	*netipds.PrefixSetBuilder,
-	*netipds.PrefixSet,
-) *netipds.PrefixSetBuilder
+type ReduceOpFn func(*netipds.PrefixSetBuilder, *netipds.PrefixSet)
 
 type ReduceOp struct {
 	OpFn ReduceOpFn
 	Path string
 }
 
-// TODO
-//var Subtract ReduceOpFn = func(a, b *netipds.PrefixSet) *netipds.PrefixSet {
-//	return a.Subtract(b)
-//}
-//
-//var Intersect ReduceOpFn = func(a, b *netipds.PrefixSet) *netipds.PrefixSet {
-//	return a.Intersect(b)
-//}
-//
-//var Union ReduceOpFn = func(a, b *netipds.PrefixSet) *netipds.PrefixSet {
-//	return a.Union(b)
-//}
+var Subtract ReduceOpFn = func(a *netipds.PrefixSetBuilder, b *netipds.PrefixSet) {
+	a.SubtractSet(b)
+}
+
+var Intersect ReduceOpFn = func(a *netipds.PrefixSetBuilder, b *netipds.PrefixSet) {
+	a.IntersectSet(b)
+}
+
+var Union ReduceOpFn = func(a *netipds.PrefixSetBuilder, b *netipds.PrefixSet) {
+	a.UnionSet(b)
+}
 
 var reduceOps = []ReduceOp{}
 
@@ -106,7 +102,7 @@ func validateMatchMode(c *cli.Context, v string) error {
 	return nil
 }
 
-// Iterate over CIDRs from stdin and files (args), calling fn for each
+// iterPathArgs calls fn on io.Readers for stdin and each of c.Args()
 func iterPathArgs(c *cli.Context, fn func(io.Reader) error) error {
 	var err error
 
@@ -139,11 +135,13 @@ func iterPathArgs(c *cli.Context, fn func(io.Reader) error) error {
 	return nil
 }
 
+// prefixSetMembershipFn returns a function which calls the method of PrefixSet
+// corresponding to the provided mode.
 func prefixSetMembershipFn(mode string) func(*netipds.PrefixSet, netip.Prefix) bool {
 	switch mode {
 	case "overlap":
 		return func(ps *netipds.PrefixSet, p netip.Prefix) bool {
-			return ps.OverlapsPrefix(p)
+			return ps.Overlaps(p)
 		}
 	case "encompass":
 		return func(ps *netipds.PrefixSet, p netip.Prefix) bool {
@@ -156,36 +154,52 @@ func prefixSetMembershipFn(mode string) func(*netipds.PrefixSet, netip.Prefix) b
 	}
 }
 
-// Subcommand handlers
-
-func handleReduce(c *cli.Context) error {
-	reduced := netipds.PrefixSetBuilder{}
-
-	// Set up processor
-	p := cq.CidrProcessor{
+// PrefixSetBuilderCidrProcessor creates a CidrProcessor which uses
+// cq.ParsePrefixOrAddr as its ValParser, adds all parsed prefixes to a new
+// PrefixSetBuilder (which is also returned as the second return value), and
+// uses the global errorHandler.
+func PrefixSetBuilderCidrProcessor() (*cq.CidrProcessor, *netipds.PrefixSetBuilder) {
+	psb := netipds.PrefixSetBuilder{}
+	cp := cq.CidrProcessor{
 		ValParser: cq.ParsePrefixOrAddr,
 		HandlerFn: func(parsed *cq.ParsedLine) error {
 			for _, prefix := range parsed.Prefixes {
-				// TODO need a way to merge redundant prefixes
-				reduced.Add(prefix)
+				psb.Add(prefix)
 			}
 			return nil
 		},
 		ErrFn: errorHandler,
 	}
+	return &cp, &psb
+}
 
-	cq.Logf("Loading input CIDRs\n")
-	err := iterPathArgs(c, func(r io.Reader) error {
-		return p.Process(r)
-	})
-	if err != nil {
+// Subcommand handlers
+
+func handleReduce(c *cli.Context) error {
+	var err error
+
+	// Build initial working set by parsing CIDRs from stdin
+	cp, workingPsb := PrefixSetBuilderCidrProcessor()
+	if err = cp.Process(io.Reader(os.Stdin)); err != nil {
 		return err
 	}
 
+	// Iterate over reduceOps, applying each to the working set
+	for _, op := range reduceOps {
+		cp, opPsb := PrefixSetBuilderCidrProcessor()
+		opReader, err := os.Open(op.Path)
+		if err != nil {
+			return err
+		}
+		if err = cp.Process(opReader); err != nil {
+			return err
+		}
+		op.OpFn(workingPsb, opPsb.PrefixSet())
+	}
+
 	// Output reduced CIDR set
-	reducedPrefixSet := reduced.PrefixSet()
-	cq.Logf("Done loading CIDRs\n")
-	for _, p := range reducedPrefixSet.PrefixesCompact() {
+	reducedPs := workingPsb.PrefixSet()
+	for _, p := range reducedPs.PrefixesCompact() {
 		fmt.Println(cq.StringMaybeAddr(p))
 	}
 	return nil
@@ -219,7 +233,7 @@ func handleFilter(c *cli.Context) error {
 			}
 			if excludeSet != nil {
 				for _, excludePrefix := range excludeSet.Prefixes() {
-					matchPsb.SubtractPrefix(excludePrefix)
+					matchPsb.Subtract(excludePrefix)
 				}
 			}
 			matchSet = matchPsb.PrefixSet()
@@ -231,12 +245,12 @@ func handleFilter(c *cli.Context) error {
 	pr := cq.CidrProcessor{
 		Fields:    fields,
 		Delimiter: c.String("delimiter"),
-		ValParser: cq.ValParser(c.Bool("url"), c.Bool("port")),
+		ValParser: cq.ValParser(c.Bool("url"), c.Bool("host")),
 		ErrFn:     errorHandler,
 		HandlerFn: func(parsed *cq.ParsedLine) error {
 			anyPassed := false
 			for _, p := range parsed.Prefixes {
-				// In quiet mode, all the filter does is parse and validate input.
+				// In quiet mode, the filter just parses and validates input CIDRs.
 				if quiet {
 					continue
 				}
@@ -306,17 +320,23 @@ func handleSort(c *cli.Context) error {
 }
 
 func main() {
-	// set args for examples sake
+
 	app := &cli.App{
-		Name:                   "cidrq",
-		Usage:                  "CIDR manipulation tool",
+		Name:  "cidrq",
+		Usage: "CIDR manipulation tool",
+		Authors: []*cli.Author{
+			{
+				Name:  "Andrew Matteson",
+				Email: "andrew.k.matteson@gmail.com",
+			},
+		},
 		UseShortOptionHandling: true,
 		Flags: []cli.Flag{
 			&cli.StringFlag{
 				Name:    "err",
 				Aliases: []string{"e"},
 				Usage: "Action to take on error (abort, skip, warn, print). " +
-					"In print mode, the line is printed to stdout. " +
+					"In print mode, the input line is printed to stdout. " +
 					"Default: abort.",
 				Value: AbortOnError,
 			},
@@ -335,50 +355,59 @@ func main() {
 			{
 				Name:  "reduce",
 				Usage: "Combine lists of CIDRs",
-				//Description: "Provide files containing lists of CIDRs using " +
-				//	"--union (-u), --intersect (-i), or --subtract (-s). CIDR " +
-				//	"lists are processed in the order they are provided. The " +
-				//	"output is a compacted list of CIDRs.",
+				Description: "Provide files containing lists of CIDRs using " +
+					"--union (-u), --intersect (-i), or --subtract (-s). Operations " +
+					"are performed in the order they are provided, with stdin " +
+					"as the first list. The output is a compacted list of CIDRs.",
 				Aliases:   []string{"r"},
 				ArgsUsage: "[paths]",
 				Action:    handleReduce,
-				//Flags: []cli.Flag{
-				//	&cli.StringFlag{
-				//		Name:    "union",
-				//		Aliases: []string{"u"},
-				//		Usage: "Return the union of these CIDRs with the " +
-				//			"working set.",
-				//		Action: func(c *cli.Context, v string) error {
-				//			// TODO
-				//			//reduceOps = append(reduceOps, ReduceOp{OpFn: Union, Path: v})
-				//			return nil
-				//		},
-				//	},
-				//	&cli.StringFlag{
-				//		Name:    "intersect",
-				//		Aliases: []string{"i"},
-				//		Usage: "Return the intersection of these CIDRs with the " +
-				//			"working set.",
-				//		Action: func(c *cli.Context, v string) error {
-				//			// TODO
-				//			//reduceOps = append(reduceOps, ReduceOp{OpFn: Intersect, Path: v})
-				//			return nil
-				//		},
-				//	},
-				//	&cli.StringFlag{
-				//		Name:    "subtract",
-				//		Aliases: []string{"s"},
-				//		Usage: "Subtract these CIDRs from the working set. " +
-				//			"If a subtracted CIDR is a child of a working-set " +
-				//			"CIDR, then the working-set CIDR will be split, " +
-				//			"leaving behind the remaining portion.",
-				//		Action: func(c *cli.Context, v string) error {
-				//			// TODO
-				//			//reduceOps = append(reduceOps, ReduceOp{OpFn: Subtract, Path: v})
-				//			return nil
-				//		},
-				//	},
-				//},
+				Flags: []cli.Flag{
+					&cli.StringFlag{
+						Name:    "union",
+						Aliases: []string{"u"},
+						Usage: "Return the union of the working set with the " +
+							"CIDRs in `FILE`.",
+						TakesFile: true,
+						Action: func(c *cli.Context, v string) error {
+							reduceOps = append(reduceOps, ReduceOp{
+								OpFn: Union,
+								Path: v,
+							})
+							return nil
+						},
+					},
+					&cli.StringFlag{
+						Name:    "intersect",
+						Aliases: []string{"i"},
+						Usage: "Return the intersection of the working set " +
+							"with the CIDRs in `FILE`.",
+						TakesFile: true,
+						Action: func(c *cli.Context, v string) error {
+							reduceOps = append(reduceOps, ReduceOp{
+								OpFn: Intersect,
+								Path: v,
+							})
+							return nil
+						},
+					},
+					&cli.StringFlag{
+						Name:    "subtract",
+						Aliases: []string{"s"},
+						Usage: "Subtract the CIDRs in `FILE` from the working " +
+							"set. If a subtracted CIDR is a child of a " +
+							"working-set CIDR, then the working-set CIDR will " +
+							"be split, leaving behind the remaining portion.",
+						TakesFile: true,
+						Action: func(c *cli.Context, v string) error {
+							reduceOps = append(reduceOps, ReduceOp{
+								OpFn: Subtract,
+								Path: v,
+							})
+							return nil
+						},
+					},
+				},
 			},
 			{
 				Name:      "sort",
@@ -396,36 +425,39 @@ func main() {
 					&cli.StringFlag{
 						Name:    "exclude",
 						Aliases: []string{"x"},
-						Usage: "Path to CIDR exclusion list. These CIDRs will " +
-							"be omitted from the output. This may require " +
-							"splitting input CIDRs.",
+						Usage: "Path to CIDR exclusion list. Input lines " +
+							"containing CIDRs found in `FILE` will be omitted " +
+							"from the output.",
 						Action: validatePath,
 					},
 					&cli.StringFlag{
-						Name: "exclude-mode",
+						Name:  "exclude-mode",
+						Value: "encompass",
 						Usage: "Comparison strategy for exclude list (overlap, " +
 							"encompass). In overlap mode, an input CIDR is " +
-							"excluded if it overlaps any CIDR in an exclude list. " +
-							"In encompass mode, an input CIDR is only excluded if " +
-							"it has a parent in an exclude list. Default: encompass.",
+							"excluded if it overlaps any CIDR in an exclude " +
+							"list. In encompass mode, an input CIDR is only " +
+							"excluded if it has a parent in an exclude list. " +
+							"Default: encompass.",
 						Action: validateExcludeMode,
 					},
 					&cli.StringFlag{
 						Name:    "match",
 						Aliases: []string{"m"},
 						Usage: "Path to CIDR match list. The filter will permit " +
-							"any CIDRs which overlap with the match list. If " +
-							"-exclude is provided, it will be applied after " +
-							"matching.",
+							"any input lines containing CIDRs that match any of " +
+							"the CIDRs in `FILE`. If -exclude is provided, it will " +
+							"be applied after matching.",
 						Action: validatePath,
 					},
 					&cli.StringFlag{
-						Name: "match-mode",
+						Name:  "match-mode",
+						Value: "overlap",
 						Usage: "Comparison strategy for match list (overlap, " +
-							"encompass). In overlap mode, an input CIDR passes " +
-							"the filter if it overlaps any CIDR in a match list. " +
-							"In encompass mode, an input CIDR passes only if it " +
-							"has a parent in a match list. Default: overlap.",
+							"encompass). In overlap mode, an input CIDR is " +
+							"a match if it overlaps any CIDR in a match list. " +
+							"In encompass mode, an input CIDR matches only if " +
+							"it has a parent in a match list. Default: overlap.",
 						Action: validateMatchMode,
 					},
 					&cli.IntSliceFlag{
@@ -445,7 +477,7 @@ func main() {
 					&cli.BoolFlag{
 						Name:    "quiet",
 						Aliases: []string{"q"},
-						Usage: "Suppress stdout. If err == print, err lines " +
+						Usage: "Suppress stdout. If -err == print, error lines " +
 							"are still printed.",
 						Value: false,
 					},
@@ -463,8 +495,8 @@ func main() {
 							"valid IP.",
 					},
 					&cli.BoolFlag{
-						Name:    "port",
-						Aliases: []string{"p"},
+						Name:    "host",
+						Aliases: []string{"H"},
 						Usage: "Accept a host[:port] as valid if the host is " +
 							"a valid IP.",
 					},
@@ -481,11 +513,48 @@ func main() {
 		},
 	}
 
-	//defer profile.Start(profile.ProfilePath(".")).Stop()
+	cli.CommandHelpTemplate = `NAME
+   {{template "helpNameTemplate" .}}
+
+USAGE
+   {{template "usageTemplate" .}}{{if .Category}}
+
+CATEGORY
+   {{.Category}}{{end}}{{if .Description}}
+
+DESCRIPTION
+   {{template "descriptionTemplate" .}}{{end}}{{if .VisibleFlagCategories}}
+
+OPTIONS{{template "visibleFlagCategoryTemplate" .}}{{else if .VisibleFlags}}
+
+OPTIONS{{range $i, $e := .VisibleFlags}}
+  {{prefixedNames $e.Names}}
+        {{wrap $e.Usage 8}}
+{{end}}{{end}}
+`
+
+	maxLineLength := getTerminalWidth(80) - 8
+	cli.HelpPrinter = func(w io.Writer, templ string, data interface{}) {
+		funcMap := map[string]interface{}{
+			"wrapAt": func() int { return maxLineLength },
+			"prefixedNames": func(names []string) string {
+				return cli.FlagNamePrefixer(names, "value")
+			},
+		}
+		cli.HelpPrinterCustom(w, templ, data, funcMap)
+	}
 
 	if err := app.Run(os.Args); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 	}
 
 	cq.Logf("Done\n")
+}
+
+func getTerminalWidth(fallback int) int {
+	fd := int(os.Stdout.Fd())
+	if width, _, err := term.GetSize(fd); err == nil {
+		return width
+	}
+	return fallback
 }
