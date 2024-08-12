@@ -66,15 +66,15 @@ type ReduceOp struct {
 }
 
 var Subtract ReduceOpFn = func(a *netipds.PrefixSetBuilder, b *netipds.PrefixSet) {
-	a.SubtractSet(b)
+	a.Subtract(b)
 }
 
 var Intersect ReduceOpFn = func(a *netipds.PrefixSetBuilder, b *netipds.PrefixSet) {
-	a.IntersectSet(b)
+	a.Intersect(b)
 }
 
 var Union ReduceOpFn = func(a *netipds.PrefixSetBuilder, b *netipds.PrefixSet) {
-	a.UnionSet(b)
+	a.Merge(b)
 }
 
 var reduceOps = []ReduceOp{}
@@ -141,7 +141,7 @@ func prefixSetMembershipFn(mode string) func(*netipds.PrefixSet, netip.Prefix) b
 	switch mode {
 	case "overlap":
 		return func(ps *netipds.PrefixSet, p netip.Prefix) bool {
-			return ps.Overlaps(p)
+			return ps.OverlapsPrefix(p)
 		}
 	case "encompass":
 		return func(ps *netipds.PrefixSet, p netip.Prefix) bool {
@@ -233,7 +233,7 @@ func handleFilter(c *cli.Context) error {
 			}
 			if excludeSet != nil {
 				for _, excludePrefix := range excludeSet.Prefixes() {
-					matchPsb.Subtract(excludePrefix)
+					matchPsb.SubtractPrefix(excludePrefix)
 				}
 			}
 			matchSet = matchPsb.PrefixSet()
