@@ -514,22 +514,22 @@ func main() {
 	}
 
 	cli.CommandHelpTemplate = `NAME
-   {{template "helpNameTemplate" .}}
+      {{template "helpNameTemplate" .}}
 
 USAGE
-   {{template "usageTemplate" .}}{{if .Category}}
+      {{template "usageTemplate" .}}{{if .Category}}
 
 CATEGORY
-   {{.Category}}{{end}}{{if .Description}}
+      {{.Category}}{{end}}{{if .Description}}
 
 DESCRIPTION
-   {{template "descriptionTemplate" .}}{{end}}{{if .VisibleFlagCategories}}
+      {{wrap .Description 6}}{{end}}{{if .VisibleFlagCategories}}
 
 OPTIONS{{template "visibleFlagCategoryTemplate" .}}{{else if .VisibleFlags}}
 
 OPTIONS{{range $i, $e := .VisibleFlags}}
-  {{prefixedNames $e.Names}}
-        {{wrap $e.Usage 8}}
+      {{prefixedNames $e}}
+            {{wrap $e.Usage 12}}
 {{end}}{{end}}
 `
 
@@ -537,8 +537,19 @@ OPTIONS{{range $i, $e := .VisibleFlags}}
 	cli.HelpPrinter = func(w io.Writer, templ string, data interface{}) {
 		funcMap := map[string]interface{}{
 			"wrapAt": func() int { return maxLineLength },
-			"prefixedNames": func(names []string) string {
-				return cli.FlagNamePrefixer(names, "value")
+			"prefixedNames": func(f cli.Flag) string {
+				df, ok := f.(cli.DocGenerationFlag)
+				if !ok {
+					return ""
+				}
+				placeholder, _ := unquoteUsage(df.GetUsage())
+				needsPlaceholder := df.TakesValue()
+
+				if needsPlaceholder && placeholder == "" {
+					placeholder = "value"
+				}
+
+				return cli.FlagNamePrefixer(f.Names(), placeholder)
 			},
 		}
 		cli.HelpPrinterCustom(w, templ, data, funcMap)
@@ -549,6 +560,24 @@ OPTIONS{{range $i, $e := .VisibleFlags}}
 	}
 
 	cq.Logf("Done\n")
+}
+
+// Returns the placeholder, if any, and the unquoted usage string.
+// Copied from urfave/cli
+func unquoteUsage(usage string) (string, string) {
+	for i := 0; i < len(usage); i++ {
+		if usage[i] == '`' {
+			for j := i + 1; j < len(usage); j++ {
+				if usage[j] == '`' {
+					name := usage[i+1 : j]
+					usage = usage[:i] + name + usage[j+1:]
+					return name, usage
+				}
+			}
+			break
+		}
+	}
+	return "", usage
 }
 
 func getTerminalWidth(fallback int) int {
