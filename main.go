@@ -6,7 +6,6 @@ import (
 	"net/netip"
 	"os"
 
-	cq "github.com/aromatt/cidrq/pkg"
 	"github.com/aromatt/netipds"
 	"github.com/urfave/cli/v2"
 	"golang.org/x/term"
@@ -48,10 +47,6 @@ func setErrorHandler(c *cli.Context) error {
 		return fmt.Errorf("Invalid error action %s", v)
 	}
 	return nil
-}
-
-func setVerbose(c *cli.Context) {
-	cq.SetVerbose(c.Bool("verbose"))
 }
 
 // Reduce operations
@@ -155,14 +150,14 @@ func prefixSetMembershipFn(mode string) func(*netipds.PrefixSet, netip.Prefix) b
 }
 
 // PrefixSetBuilderCidrProcessor creates a CidrProcessor which uses
-// cq.ParsePrefixOrAddr as its ValParser, adds all parsed prefixes to a new
+// ParsePrefixOrAddr as its ValParser, adds all parsed prefixes to a new
 // PrefixSetBuilder (which is also returned as the second return value), and
 // uses the global errorHandler.
-func PrefixSetBuilderCidrProcessor() (*cq.CidrProcessor, *netipds.PrefixSetBuilder) {
+func PrefixSetBuilderCidrProcessor() (*CidrProcessor, *netipds.PrefixSetBuilder) {
 	psb := netipds.PrefixSetBuilder{}
-	cp := cq.CidrProcessor{
-		ValParser: cq.ParsePrefixOrAddr,
-		HandlerFn: func(parsed *cq.ParsedLine) error {
+	cp := CidrProcessor{
+		ValParser: ParsePrefixOrAddr,
+		HandlerFn: func(parsed *ParsedLine) error {
 			for _, prefix := range parsed.Prefixes {
 				psb.Add(prefix)
 			}
@@ -200,7 +195,7 @@ func handleReduce(c *cli.Context) error {
 	// Output reduced CIDR set
 	reducedPs := workingPsb.PrefixSet()
 	for _, p := range reducedPs.PrefixesCompact() {
-		fmt.Println(cq.StringMaybeAddr(p))
+		fmt.Println(StringMaybeAddr(p))
 	}
 	return nil
 }
@@ -217,8 +212,8 @@ func handleFilter(c *cli.Context) error {
 	if !quiet {
 		// --exclude
 		if excludePath := c.String("exclude"); excludePath != "" {
-			cq.Logf("Loading exclude file '%s'\n", c.String("exclude"))
-			excludeSet, err = cq.LoadPrefixSetFromFile(excludePath, errorHandler)
+			Logf("Loading exclude file '%s'\n", c.String("exclude"))
+			excludeSet, err = LoadPrefixSetFromFile(excludePath, errorHandler)
 			if err != nil {
 				return err
 			}
@@ -226,8 +221,8 @@ func handleFilter(c *cli.Context) error {
 
 		// --match
 		if matchPath := c.String("match"); matchPath != "" {
-			cq.Logf("Loading match file '%s'\n", c.String("match"))
-			matchPsb, err := cq.LoadPrefixSetBuilderFromFile(matchPath, errorHandler)
+			Logf("Loading match file '%s'\n", c.String("match"))
+			matchPsb, err := LoadPrefixSetBuilderFromFile(matchPath, errorHandler)
 			if err != nil {
 				return err
 			}
@@ -242,12 +237,12 @@ func handleFilter(c *cli.Context) error {
 
 	// Set up processor
 	fields := c.IntSlice("field")
-	pr := cq.CidrProcessor{
+	pr := CidrProcessor{
 		Fields:    fields,
 		Delimiter: c.String("delimiter"),
-		ValParser: cq.ValParser(c.Bool("url"), c.Bool("host")),
+		ValParser: ValParser(c.Bool("url"), c.Bool("host")),
 		ErrFn:     errorHandler,
-		HandlerFn: func(parsed *cq.ParsedLine) error {
+		HandlerFn: func(parsed *ParsedLine) error {
 			anyPassed := false
 			for _, p := range parsed.Prefixes {
 				// In quiet mode, the filter just parses and validates input CIDRs.
@@ -280,7 +275,7 @@ func handleFilter(c *cli.Context) error {
 		},
 	}
 
-	cq.Logf("Processing input CIDRs\n")
+	Logf("Processing input CIDRs\n")
 	return iterPathArgs(c, func(r io.Reader) error {
 		return pr.Process(r)
 	})
@@ -290,9 +285,9 @@ func handleSort(c *cli.Context) error {
 	sorted := netipds.PrefixSetBuilder{}
 
 	// Set up processor
-	p := cq.CidrProcessor{
-		ValParser: cq.ParsePrefixOrAddr,
-		HandlerFn: func(parsed *cq.ParsedLine) error {
+	p := CidrProcessor{
+		ValParser: ParsePrefixOrAddr,
+		HandlerFn: func(parsed *ParsedLine) error {
 			for _, prefix := range parsed.Prefixes {
 				// TODO need a way to merge redundant prefixes
 				sorted.Add(prefix)
@@ -302,7 +297,7 @@ func handleSort(c *cli.Context) error {
 		ErrFn: errorHandler,
 	}
 
-	cq.Logf("Loading input CIDRs\n")
+	Logf("Loading input CIDRs\n")
 	err := iterPathArgs(c, func(r io.Reader) error {
 		return p.Process(r)
 	})
@@ -312,9 +307,9 @@ func handleSort(c *cli.Context) error {
 
 	// Output sorted CIDR set
 	sortedPrefixSet := sorted.PrefixSet()
-	cq.Logf("Done loading CIDRs\n")
+	Logf("Done loading CIDRs\n")
 	for _, p := range sortedPrefixSet.Prefixes() {
-		fmt.Println(cq.StringMaybeAddr(p))
+		fmt.Println(StringMaybeAddr(p))
 	}
 	return nil
 }
@@ -348,7 +343,7 @@ func main() {
 			},
 		},
 		Before: func(c *cli.Context) error {
-			setVerbose(c)
+			SetVerbose(c.Bool("verbose"))
 			return setErrorHandler(c)
 		},
 		Commands: []*cli.Command{
@@ -559,7 +554,7 @@ OPTIONS{{range $i, $e := .VisibleFlags}}
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 	}
 
-	cq.Logf("Done\n")
+	Logf("Done\n")
 }
 
 // Returns the placeholder, if any, and the unquoted usage string.

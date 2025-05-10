@@ -2,15 +2,15 @@
 
 GOBUILD=go build
 
-LIB_SOURCES := $(wildcard pkg/*.go)
+SOURCES := $(wildcard *.go)
 BIN_TARGET := cidrq
 
 .PHONY: all
 
 all: $(BIN_TARGET)
 
-cidrq: $(LIB_SOURCES) go.mod go.sum
-	$(GOBUILD) -o $@ main.go
+cidrq: $(SOURCES) go.mod go.sum
+	$(GOBUILD) -o $@ ./...
 
 clean:
 	rm $(BIN_TARGET)
