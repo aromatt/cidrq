@@ -8,6 +8,9 @@ With cidrq, you can...
 * **Combine** - calculate unions, intersections and differences
 * **Validate and sanitize** - extract IPs from URLs; scan for lines that contain (or don't contain) valid IPs/CIDRs
 
+## Documentation
+
+
 ## Installation
 ```
 go install github.com/aromatt/cidrq@latest

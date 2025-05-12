@@ -49,30 +49,30 @@ func setErrorHandler(c *cli.Context) error {
 	return nil
 }
 
-// Reduce operations
+// Combine operations
 
-// ReduceOpFn performs an operation on a PrefixSetBuilder using a PrefixSet as
+// CombineOpFn performs an operation on a PrefixSetBuilder using a PrefixSet as
 // input.
-type ReduceOpFn func(*netipds.PrefixSetBuilder, *netipds.PrefixSet)
+type CombineOpFn func(*netipds.PrefixSetBuilder, *netipds.PrefixSet)
 
-type ReduceOp struct {
-	OpFn ReduceOpFn
+type CombineOp struct {
+	OpFn CombineOpFn
 	Path string
 }
 
-var Subtract ReduceOpFn = func(a *netipds.PrefixSetBuilder, b *netipds.PrefixSet) {
+var Subtract CombineOpFn = func(a *netipds.PrefixSetBuilder, b *netipds.PrefixSet) {
 	a.Subtract(b)
 }
 
-var Intersect ReduceOpFn = func(a *netipds.PrefixSetBuilder, b *netipds.PrefixSet) {
+var Intersect CombineOpFn = func(a *netipds.PrefixSetBuilder, b *netipds.PrefixSet) {
 	a.Intersect(b)
 }
 
-var Union ReduceOpFn = func(a *netipds.PrefixSetBuilder, b *netipds.PrefixSet) {
+var Union CombineOpFn = func(a *netipds.PrefixSetBuilder, b *netipds.PrefixSet) {
 	a.Merge(b)
 }
 
-var reduceOps = []ReduceOp{}
+var combineOps = []CombineOp{}
 
 // Validation functions
 
@@ -170,7 +170,7 @@ func PrefixSetBuilderCidrProcessor() (*CidrProcessor, *netipds.PrefixSetBuilder)
 
 // Subcommand handlers
 
-func handleReduce(c *cli.Context) error {
+func handleCombine(c *cli.Context) error {
 	var err error
 
 	// Build initial working set by parsing CIDRs from stdin
@@ -179,8 +179,8 @@ func handleReduce(c *cli.Context) error {
 		return err
 	}
 
-	// Iterate over reduceOps, applying each to the working set
-	for _, op := range reduceOps {
+	// Iterate over combineOps, applying each to the working set
+	for _, op := range combineOps {
 		cp, opPsb := PrefixSetBuilderCidrProcessor()
 		opReader, err := os.Open(op.Path)
 		if err != nil {
@@ -192,9 +192,9 @@ func handleReduce(c *cli.Context) error {
 		op.OpFn(workingPsb, opPsb.PrefixSet())
 	}
 
-	// Output reduced CIDR set
-	reducedPs := workingPsb.PrefixSet()
-	for _, p := range reducedPs.PrefixesCompact() {
+	// Output combined CIDR set
+	combinedPs := workingPsb.PrefixSet()
+	for _, p := range combinedPs.PrefixesCompact() {
 		fmt.Println(StringMaybeAddr(p))
 	}
 	return nil
@@ -348,15 +348,15 @@ func main() {
 		},
 		Commands: []*cli.Command{
 			{
-				Name:  "reduce",
+				Name:  "combine",
 				Usage: "Combine lists of CIDRs",
 				Description: "Provide files containing lists of CIDRs using " +
 					"--union (-u), --intersect (-i), or --subtract (-s). Operations " +
 					"are performed in the order they are provided, with stdin " +
 					"as the first list. The output is a compacted list of CIDRs.",
-				Aliases:   []string{"r"},
+				Aliases:   []string{"c"},
 				ArgsUsage: "[paths]",
-				Action:    handleReduce,
+				Action:    handleCombine,
 				Flags: []cli.Flag{
 					&cli.StringFlag{
 						Name:    "union",
@@ -365,7 +365,7 @@ func main() {
 							"CIDRs in `FILE`.",
 						TakesFile: true,
 						Action: func(c *cli.Context, v string) error {
-							reduceOps = append(reduceOps, ReduceOp{
+							combineOps = append(combineOps, CombineOp{
 								OpFn: Union,
 								Path: v,
 							})
@@ -379,7 +379,7 @@ func main() {
 							"with the CIDRs in `FILE`.",
 						TakesFile: true,
 						Action: func(c *cli.Context, v string) error {
-							reduceOps = append(reduceOps, ReduceOp{
+							combineOps = append(combineOps, CombineOp{
 								OpFn: Intersect,
 								Path: v,
 							})
@@ -395,7 +395,7 @@ func main() {
 							"be split, leaving behind the remaining portion.",
 						TakesFile: true,
 						Action: func(c *cli.Context, v string) error {
-							reduceOps = append(reduceOps, ReduceOp{
+							combineOps = append(combineOps, CombineOp{
 								OpFn: Subtract,
 								Path: v,
 							})
